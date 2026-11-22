@@ -1,0 +1,75 @@
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, Modal, TextInput, FlatList, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { collection, query, where, orderBy, onSnapshot, addDoc, doc, getDoc, getDocs, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from '../config';
+import { useTheme, BRAND } from './theme';
+
+export function CommentModal({ postId, onClose }: { postId: string | null; onClose: () => void }) {
+  const { c } = useTheme();
+    const [comments, setComments] = useState<any[]>([]);
+      const [text, setText] = useState('');
+
+        useEffect(() => {
+            if (!postId) return;
+                return onSnapshot(query(collection(db, 'posts', postId, 'comments'), orderBy('createdAt', 'asc')), (s) => {
+                      setComments(s.docs.map((d) => ({ id: d.id, ...d.data() })));
+                          });
+                            }, [postId]);
+
+                              const send = async () => {
+                                  const uid = auth.currentUser?.uid;
+                                      if (!postId || !text.trim() || !uid) return;
+                                          const body = text.trim(); setText('');
+                                              const u = await getDoc(doc(db, 'users', uid));
+                                                  const uname = u.data()?.username || 'user';
+                                                      await addDoc(collection(db, 'posts', postId, 'comments'), { uid, username: uname, text: body, createdAt: serverTimestamp() });
+                                                          const postSnap = await getDoc(doc(db, 'posts', postId));
+                                                              const ownerUid = postSnap.data()?.uid;
+                                                                  if (ownerUid && ownerUid !== uid) {
+                                                                        await addDoc(collection(db, 'notifications'), {
+                                                                                toUid: ownerUid, fromUid: uid, fromUsername: uname, type: 'comment', message: `commented: ${body}`, read: false, createdAt: serverTimestamp(),
+                                                                                      });
+                                                                                          }
+                                                                                              const mentions = body.match(/@\w+/g) || [];
+                                                                                                  for (const m of mentions) {
+                                                                                                        const snap = await getDocs(query(collection(db, 'users'), where('username', '==', m.slice(1).toLowerCase())));
+                                                                                                              snap.forEach((docSnap) => {
+                                                                                                                      if (docSnap.id !== uid) {
+                                                                                                                                addDoc(collection(db, 'notifications'), {
+                                                                                                                                            toUid: docSnap.id, fromUid: uid, fromUsername: uname, type: 'mention', message: `mentioned you: ${body}`, read: false, createdAt: serverTimestamp(),
+                                                                                                                                                      });
+                                                                                                                                                              }
+                                                                                                                                                                    });
+                                                                                                                                                                        }
+                                                                                                                                                                          };
+
+                                                                                                                                                                            return (
+                                                                                                                                                                                <Modal visible={!!postId} animationType="slide" transparent>
+                                                                                                                                                                                      <View style={styles.cBg}>
+                                                                                                                                                                                              <View style={[styles.cCard, { backgroundColor: c.background }]}>
+                                                                                                                                                                                                        <View style={[styles.cHead, { borderBottomColor: c.border }]}>
+                                                                                                                                                                                                                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 16 }}>Comments</Text>
+                                                                                                                                                                                                                                <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={c.text} /></TouchableOpacity>
+                                                                                                                                                                                                                                          </View>
+                                                                                                                                                                                                                                                    <FlatList data={comments} keyExtractor={(i) => i.id} renderItem={({ item }) => (
+                                                                                                                                                                                                                                                                <Text style={{ color: c.text, paddingVertical: 6 }}><Text style={{ fontWeight: '700' }}>@{item.username} </Text>{item.text}</Text>
+                                                                                                                                                                                                                                                                          )} />
+                                                                                                                                                                                                                                                                                    <View style={[styles.cInputRow, { borderTopColor: c.border }]}>
+                                                                                                                                                                                                                                                                                                <TextInput style={[styles.cInput, { backgroundColor: c.input, color: c.text }]} placeholder="Add a comment..." placeholderTextColor={c.muted} value={text} onChangeText={setText} />
+                                                                                                                                                                                                                                                                                                            <TouchableOpacity onPress={send}><Ionicons name="send" size={22} color={BRAND} /></TouchableOpacity>
+                                                                                                                                                                                                                                                                                                                      </View>
+                                                                                                                                                                                                                                                                                                                              </View>
+                                                                                                                                                                                                                                                                                                                                    </View>
+                                                                                                                                                                                                                                                                                                                                        </Modal>
+                                                                                                                                                                                                                                                                                                                                          );
+                                                                                                                                                                                                                                                                                                                                          }
+
+                                                                                                                                                                                                                                                                                                                                          const styles = StyleSheet.create({
+                                                                                                                                                                                                                                                                                                                                            cBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+                                                                                                                                                                                                                                                                                                                                              cCard: { height: '65%', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16 },
+                                                                                                                                                                                                                                                                                                                                                cHead: { flexDirection: 'row', justifyContent: 'space-between', paddingBottom: 10, borderBottomWidth: 1 },
+                                                                                                                                                                                                                                                                                                                                                  cInputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 10, borderTopWidth: 1 },
+                                                                                                                                                                                                                                                                                                                                                    cInput: { flex: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
+                                                                                                                                                                                                                                                                                                                                                    });
+                                                                                                                                                                                                                                                                                                                                                    

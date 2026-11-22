@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>Flevora — Delete Account</title>
+        <style>
+            body { font-family: system-ui, sans-serif; background: #F9FAFB; color: #111827; margin: 0; padding: 20px; }
+                .card { max-width: 440px; margin: 40px auto; background: #fff; border: 1px solid #E5E7EB; border-radius: 14px; padding: 22px; }
+                    h2 { color: #8B5CF6; margin-top: 0; }
+                        input { width: 100%; padding: 11px; border: 1px solid #D1D5DB; border-radius: 8px; margin-bottom: 10px; box-sizing: border-box; }
+                            button { width: 100%; padding: 12px; background: #DC2626; color: #fff; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; }
+                                p { font-size: 14px; color: #4B5563; line-height: 1.5; }
+                                    #msg { margin-top: 12px; font-weight: 600; font-size: 14px; }
+                                      </style>
+                                      </head>
+                                      <body>
+                                        <div class="card">
+                                            <h2>Flevora Account Deletion</h2>
+                                                <p>Sign in with your Flevora email and password to permanently delete your account, profile, posts, stories, and notifications.</p>
+                                                    <input id="em" type="email" placeholder="Flevora Email" />
+                                                        <input id="pw" type="password" placeholder="Password" />
+                                                            <button onclick="delAcc()">Permanently Delete My Account</button>
+                                                                <p id="msg"></p>
+                                                                    <p style="font-size:12px;margin-top:16px;">Google Sign-In user? Use <strong>Settings &rarr; Delete Account</strong> in the app, or email <strong>deepakk770485@gmail.com</strong>. <a href="./privacy.html">Privacy Policy</a></p>
+                                                                      </div>
+                                                                        <script type="module">
+                                                                            import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+                                                                                import { getAuth, signInWithEmailAndPassword, deleteUser } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+                                                                                    import { getFirestore, collection, query, where, getDocs, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+                                                                                        const app = initializeApp({
+                                                                                              apiKey: "AIzaSyBV63crlJvOorayDbWoeP4bbtDF0VNxGHE",
+                                                                                                    authDomain: "flevora-fb8bb.firebaseapp.com",
+                                                                                                          projectId: "flevora-fb8bb",
+                                                                                                                storageBucket: "flevora-fb8bb.firebasestorage.app",
+                                                                                                                      messagingSenderId: "506028452820",
+                                                                                                                            appId: "1:506028452820:web:9e55311c930213f71d0441"
+                                                                                                                                });
+                                                                                                                                    const auth = getAuth(app), db = getFirestore(app);
+
+                                                                                                                                        window.delAcc = async () => {
+                                                                                                                                              const msg = document.getElementById('msg');
+                                                                                                                                                    const email = document.getElementById('em').value.trim();
+                                                                                                                                                          const pass = document.getElementById('pw').value;
+                                                                                                                                                                if (!email || !pass) { msg.style.color = '#DC2626'; msg.innerText = 'Enter email and password.'; return; }
+                                                                                                                                                                      if (!confirm('Permanently delete your Flevora account and all data?')) return;
+                                                                                                                                                                            try {
+                                                                                                                                                                                    msg.style.color = '#6B7280'; msg.innerText = 'Deleting account and data...';
+                                                                                                                                                                                            const cred = await signInWithEmailAndPassword(auth, email, pass);
+                                                                                                                                                                                                    const uid = cred.user.uid;
+                                                                                                                                                                                                            const [p, s, nt, nf] = await Promise.all([
+                                                                                                                                                                                                                      getDocs(query(collection(db, 'posts'), where('uid', '==', uid))),
+                                                                                                                                                                                                                                getDocs(query(collection(db, 'stories'), where('uid', '==', uid))),
+                                                                                                                                                                                                                                          getDocs(query(collection(db, 'notifications'), where('toUid', '==', uid))),
+                                                                                                                                                                                                                                                    getDocs(query(collection(db, 'notifications'), where('fromUid', '==', uid)))
+                                                                                                                                                                                                                                                            ]);
+                                                                                                                                                                                                                                                                    await Promise.all([
+                                                                                                                                                                                                                                                                              ...p.docs.map(d => deleteDoc(d.ref)), ...s.docs.map(d => deleteDoc(d.ref)),
+                                                                                                                                                                                                                                                                                        ...nt.docs.map(d => deleteDoc(d.ref)), ...nf.docs.map(d => deleteDoc(d.ref))
+                                                                                                                                                                                                                                                                                                ]);
+                                                                                                                                                                                                                                                                                                        await deleteDoc(doc(db, 'users', uid));
+                                                                                                                                                                                                                                                                                                                await deleteUser(cred.user);
+                                                                                                                                                                                                                                                                                                                        msg.style.color = '#10B981'; msg.innerText = 'Account and data permanently deleted.';
+                                                                                                                                                                                                                                                                                                                              } catch (e) {
+                                                                                                                                                                                                                                                                                                                                      msg.style.color = '#DC2626'; msg.innerText = e.message || 'Deletion failed.';
+                                                                                                                                                                                                                                                                                                                                            }
+                                                                                                                                                                                                                                                                                                                                                };
+                                                                                                                                                                                                                                                                                                                                                  </script>
+                                                                                                                                                                                                                                                                                                                                                  </body>
+                                                                                                                                                                                                                                                                                                                                                  </html>
+                                                                                                                                                                                                                                                                                                                                                  
