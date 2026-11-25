@@ -1,129 +1,140 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Image, TouchableOpacity, ScrollView, Modal, TextInput, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Image, Modal, TextInput, FlatList, ActivityIndicator, StyleSheet, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../config';
-import { useTheme, BRAND } from './theme';
+import { BRAND } from './theme';
+import { StoryViewerModal } from './StoryViewerModal';
+import { HighlightViewerModal } from './HighlightViewerModal';
 
-const CLOUD_NAME = 'faqfo0lu';
-const UPLOAD_PRESET = 'flevora_upload';
+const W = Dimensions.get('window').width / 3 - 2;
+const fmtDate = (ts: any) => {
+  const d = ts?.toDate ? ts.toDate() : null;
+  return d ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' }) : 'Recent';
+};
 
-export function HighlightsRow({ uid, isOwner }: { uid: string; isOwner?: boolean }) {
-  const { c } = useTheme();
-    const [items, setItems] = useState<any[]>([]);
-      const [viewItem, setViewItem] = useState<any | null>(null);
-        const [addOpen, setAddOpen] = useState(false);
-          const [title, setTitle] = useState('');
-            const [imgUri, setImgUri] = useState('');
-              const [saving, setSaving] = useState(false);
+export function HighlightsRow({ uid, user, isOwn, isOwner, highlights = [], c }: any) {
+  const own = isOwn || isOwner;
+  const [myStories, setMyStories] = useState<any[]>([]);
+  const [step, setStep] = useState<'' | 'pick' | 'cover'>('');
+  const [picked, setPicked] = useState<string[]>([]);
+  const [cover, setCover] = useState('');
+  const [title, setTitle] = useState('Highlights');
+  const [loading, setLoading] = useState(false);
+  const [viewHL, setViewHL] = useState<any>(null);
 
-                useEffect(() => {
-                    if (!uid) return;
-                        return onSnapshot(doc(db, 'users', uid), (s) => {
-                              setItems(s.data()?.highlights || []);
-                                  });
-                                    }, [uid]);
+  useEffect(() => {
+    if (!uid || !own) return;
+    return onSnapshot(query(collection(db, 'stories'), where('uid', '==', uid)), (s) => {
+      const l = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+      l.sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      setMyStories(l);
+    });
+  }, [uid, own]);
 
-                                      const pickPhoto = async () => {
-                                          const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [9, 16], quality: 0.7 });
-                                              if (!res.canceled && res.assets[0]) setImgUri(res.assets[0].uri);
-                                                };
+  const pickGalleryCover = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.8 });
+    if (!res.canceled && res.assets[0]) setCover(res.assets[0].uri);
+  };
 
-                                                  const saveHighlight = async () => {
-                                                      if (!title.trim() || !imgUri || !uid) return Alert.alert('Missing', 'Add a title and photo.');
-                                                          setSaving(true);
-                                                              try {
-                                                                    const data = new FormData();
-                                                                          data.append('file', { uri: imgUri, type: 'image/jpeg', name: `hl_${Date.now()}.jpg` } as any);
-                                                                                data.append('upload_preset', UPLOAD_PRESET);
-                                                                                      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method: 'POST', body: data });
-                                                                                            const json = await res.json();
-                                                                                                  if (json.secure_url) {
-                                                                                                          await updateDoc(doc(db, 'users', uid), {
-                                                                                                                    highlights: arrayUnion({ id: String(Date.now()), title: title.trim(), mediaUrl: json.secure_url }),
-                                                                                                                            });
-                                                                                                                                    setTitle(''); setImgUri(''); setAddOpen(false);
-                                                                                                                                          }
-                                                                                                                                              } catch {
-                                                                                                                                                    Alert.alert('Error', 'Could not upload highlight.');
-                                                                                                                                                        } finally {
-                                                                                                                                                              setSaving(false);
-                                                                                                                                                                  }
-                                                                                                                                                                    };
+  const saveHighlight = async () => {
+    if (!picked.length || loading) return;
+    setLoading(true);
+    let finalCover = cover || picked[0];
+    if (finalCover.startsWith('file') || finalCover.startsWith('content')) {
+      const data = new FormData();
+      data.append('file', { uri: finalCover, type: 'image/jpeg', name: `hl_${Date.now()}.jpg` } as any);
+      data.append('upload_preset', 'flevora_upload');
+      finalCover = await new Promise<string>((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', 'https://api.cloudinary.com/v1_1/faqfo0lu/image/upload');
+        xhr.onload = () => resolve(JSON.parse(xhr.responseText)?.secure_url || picked[0]);
+        xhr.onerror = () => resolve(picked[0]);
+        xhr.send(data);
+      });
+    }
+    const next = [...highlights, { id: `hl_${Date.now()}`, title: title.trim() || 'Highlights', cover: finalCover, stories: picked }];
+    await updateDoc(doc(db, 'users', uid), { highlights: next });
+    setLoading(false); setStep(''); setPicked([]); setTitle('Highlights');
+  };
 
-                                                                                                                                                                      const removeHighlight = (item: any) => {
-                                                                                                                                                                          if (!isOwner) return;
-                                                                                                                                                                              Alert.alert('Delete Highlight', `Remove "${item.title}"?`, [
-                                                                                                                                                                                    { text: 'Cancel', style: 'cancel' },
-                                                                                                                                                                                          { text: 'Delete', style: 'destructive', onPress: () => updateDoc(doc(db, 'users', uid), { highlights: arrayRemove(item) }) },
-                                                                                                                                                                                              ]);
-                                                                                                                                                                                                };
+  const shown = highlights.filter((h: any) => !h.archived);
 
-                                                                                                                                                                                                  if (!isOwner && items.length === 0) return null;
+  return (
+    <View style={{ marginVertical: 10 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+        {own && (
+          <TouchableOpacity style={s.item} onPress={() => { setPicked([]); setStep('pick'); }}>
+            <View style={[s.circle, { borderColor: c.text }]}><Ionicons name="add" size={28} color={c.text} /></View>
+            <Text style={[s.lbl, { color: c.text }]}>New</Text>
+          </TouchableOpacity>
+        )}
+        {shown.map((hl: any) => (
+          <TouchableOpacity key={hl.id} style={s.item} onPress={() => setViewHL(hl)}>
+            <View style={[s.circle, { borderColor: c.border }]}><Image source={{ uri: hl.cover || hl.stories?.[0] }} style={s.img} /></View>
+            <Text style={[s.lbl, { color: c.text }]} numberOfLines={1}>{hl.title}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
-                                                                                                                                                                                                    return (
-                                                                                                                                                                                                        <View style={{ marginTop: 12 }}>
-                                                                                                                                                                                                              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
-                                                                                                                                                                                                                      {isOwner && (
-                                                                                                                                                                                                                                <TouchableOpacity style={styles.hl} onPress={() => setAddOpen(true)}>
-                                                                                                                                                                                                                                            <View style={[styles.ring, { borderColor: c.border, backgroundColor: c.input }]}>
-                                                                                                                                                                                                                                                          <Ionicons name="add" size={26} color={c.text} />
-                                                                                                                                                                                                                                                                      </View>
-                                                                                                                                                                                                                                                                                  <Text style={{ color: c.text, fontSize: 11, marginTop: 4 }}>New</Text>
-                                                                                                                                                                                                                                                                                            </TouchableOpacity>
-                                                                                                                                                                                                                                                                                                    )}
-                                                                                                                                                                                                                                                                                                            {items.map((h) => (
-                                                                                                                                                                                                                                                                                                                      <TouchableOpacity key={h.id} style={styles.hl} onPress={() => setViewItem(h)} onLongPress={() => removeHighlight(h)}>
-                                                                                                                                                                                                                                                                                                                                  <View style={[styles.ring, { borderColor: c.border }]}>
-                                                                                                                                                                                                                                                                                                                                                <Image source={{ uri: h.mediaUrl }} style={styles.img} />
-                                                                                                                                                                                                                                                                                                                                                            </View>
-                                                                                                                                                                                                                                                                                                                                                                        <Text style={{ color: c.text, fontSize: 11, marginTop: 4, maxWidth: 62 }} numberOfLines={1}>{h.title}</Text>
-                                                                                                                                                                                                                                                                                                                                                                                  </TouchableOpacity>
-                                                                                                                                                                                                                                                                                                                                                                                          ))}
-                                                                                                                                                                                                                                                                                                                                                                                                </ScrollView>
+      <Modal visible={step === 'pick'} animationType="slide" onRequestClose={() => setStep('')}>
+        <View style={{ flex: 1, backgroundColor: c.background, paddingTop: 46 }}>
+          <View style={s.hdr}>
+            <TouchableOpacity onPress={() => setStep('')}><Ionicons name="arrow-back" size={24} color={c.text} /></TouchableOpacity>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: c.text }}>{picked.length} selected</Text>
+            <TouchableOpacity disabled={!picked.length} onPress={() => { setCover(picked[0]); setStep('cover'); }}><Text style={{ color: picked.length ? '#3B82F6' : c.muted, fontWeight: '700', fontSize: 16 }}>Next</Text></TouchableOpacity>
+          </View>
+          <FlatList data={myStories} numColumns={3} keyExtractor={(i) => i.id} ListEmptyComponent={<Text style={{ textAlign: 'center', color: c.muted, marginTop: 40 }}>No past stories found</Text>} renderItem={({ item }) => {
+            const sel = picked.includes(item.mediaUrl);
+            const thumb = item.mediaType === 'video' ? item.mediaUrl.replace(/\.[^/.]+$/, '.jpg') : item.mediaUrl;
+            return (
+              <TouchableOpacity style={s.tile} onPress={() => setPicked((p) => sel ? p.filter((x) => x !== item.mediaUrl) : [...p, item.mediaUrl])}>
+                <Image source={{ uri: thumb }} style={{ width: '100%', height: '100%' }} />
+                <View style={s.dBadge}><Text style={{ fontSize: 10, fontWeight: '700', color: '#111' }}>{fmtDate(item.createdAt)}</Text></View>
+                <Ionicons name={sel ? 'checkbox' : 'square-outline'} size={22} color={sel ? '#3B82F6' : '#fff'} style={s.chk} />
+              </TouchableOpacity>
+            );
+          }} />
+        </View>
+      </Modal>
 
-                                                                                                                                                                                                                                                                                                                                                                                                      <Modal visible={addOpen} animationType="slide" transparent>
-                                                                                                                                                                                                                                                                                                                                                                                                              <View style={styles.bg}>
-                                                                                                                                                                                                                                                                                                                                                                                                                        <View style={[styles.card, { backgroundColor: c.background }]}>
-                                                                                                                                                                                                                                                                                                                                                                                                                                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 17, marginBottom: 12 }}>New Highlight</Text>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                <TextInput style={[styles.input, { backgroundColor: c.input, borderColor: c.border, color: c.text }]} placeholder="Highlight Title (e.g. Travel)" placeholderTextColor={c.muted} value={title} onChangeText={setTitle} />
-                                                                                                                                                                                                                                                                                                                                                                                                                                                            <TouchableOpacity style={[styles.pick, { borderColor: c.border }]} onPress={pickPhoto}>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                          {imgUri ? <Image source={{ uri: imgUri }} style={{ width: '100%', height: 140, borderRadius: 10 }} /> : <Text style={{ color: BRAND, fontWeight: '600' }}>Pick Cover Photo</Text>}
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      </TouchableOpacity>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                <TouchableOpacity style={[styles.btn, { backgroundColor: c.input }]} onPress={() => setAddOpen(false)}><Text style={{ color: c.text }}>Cancel</Text></TouchableOpacity>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              <TouchableOpacity style={[styles.btn, { backgroundColor: BRAND }]} onPress={saveHighlight} disabled={saving}>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              {saving ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Save</Text>}
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            </TouchableOpacity>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        </View>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  </View>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          </View>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                </Modal>
+      <Modal visible={step === 'cover'} animationType="slide" onRequestClose={() => setStep('pick')}>
+        <View style={{ flex: 1, backgroundColor: c.background, paddingTop: 46, alignItems: 'center' }}>
+          <View style={[s.hdr, { width: '100%' }]}>
+            <TouchableOpacity onPress={() => setStep('pick')}><Ionicons name="arrow-back" size={24} color={c.text} /></TouchableOpacity>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: c.text }}>New highlight</Text>
+            <TouchableOpacity onPress={saveHighlight} style={s.okBtn}><Ionicons name="checkmark" size={20} color="#fff" /></TouchableOpacity>
+          </View>
+          <TouchableOpacity onPress={pickGalleryCover} style={{ marginTop: 90, alignItems: 'center' }}>
+            <Image source={{ uri: cover || picked[0] }} style={s.bigCov} />
+            <Text style={{ color: '#3B82F6', fontWeight: '700', marginTop: 10 }}>Edit cover</Text>
+          </TouchableOpacity>
+          <TextInput value={title} onChangeText={setTitle} placeholder="Highlight name" placeholderTextColor={c.muted} style={[s.tInp, { color: c.text }]} />
+          {loading && <View style={s.loadBg}><View style={s.loadBox}><ActivityIndicator size="small" color="#111" /><Text style={{ marginLeft: 10, fontWeight: '600' }}>Loading...</Text></View></View>}
+        </View>
+      </Modal>
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      <Modal visible={!!viewItem} animationType="fade" transparent>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              <View style={styles.full}>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        <View style={styles.vHead}>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{viewItem?.title}</Text>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                <TouchableOpacity onPress={() => setViewItem(null)}><Ionicons name="close" size={28} color="#fff" /></TouchableOpacity>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          </View>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    {!!viewItem?.mediaUrl && <Image source={{ uri: viewItem.mediaUrl }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />}
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            </View>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  </Modal>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      </View>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        );
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        }
+      {viewHL && (own ? (
+        <HighlightViewerModal visible={!!viewHL} onClose={() => setViewHL(null)} highlight={viewHL} uid={uid} allHighlights={highlights} isOwn />
+      ) : (
+        <StoryViewerModal {...({ visible: !!viewHL, stories: (viewHL.stories || []).map((u: string, i: number) => ({ id: `${viewHL.id}_${i}`, uid: user?.id || uid, username: user?.username, userPhoto: user?.photoUrl, mediaUrl: u, mediaType: u.includes('.mp4') ? 'video' : 'image' })), initialIndex: 0, myUid: uid, me: user, c, onClose: () => setViewHL(null) } as any)} />
+      ))}
+    </View>
+  );
+}
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        const styles = StyleSheet.create({
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          hl: { alignItems: 'center' },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ring: { width: 60, height: 60, borderRadius: 30, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              img: { width: 54, height: 54, borderRadius: 27 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                bg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  card: { borderRadius: 16, padding: 18 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    input: { borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 10 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      pick: { borderWidth: 1, borderStyle: 'dashed', borderRadius: 10, padding: 18, alignItems: 'center' },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        btn: { flex: 1, padding: 12, borderRadius: 10, alignItems: 'center' },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          full: { flex: 1, backgroundColor: '#000', justifyContent: 'center' },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            vHead: { position: 'absolute', top: 48, left: 16, right: 16, zIndex: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            });
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
+const s = StyleSheet.create({
+  item: { alignItems: 'center', width: 70 },
+  circle: { width: 66, height: 66, borderRadius: 33, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', padding: 2 },
+  img: { width: '100%', height: '100%', borderRadius: 30 }, lbl: { fontSize: 11, marginTop: 4 },
+  hdr: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12 },
+  tile: { width: W, height: W * 1.45, margin: 1 },
+  dBadge: { position: 'absolute', top: 6, left: 6, backgroundColor: '#fff', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  chk: { position: 'absolute', top: 6, right: 6 },
+  okBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#3B82F6', alignItems: 'center', justifyContent: 'center' },
+  bigCov: { width: 96, height: 96, borderRadius: 48, borderWidth: 1, borderColor: '#E5E7EB' },
+  tInp: { fontSize: 18, fontWeight: '600', textAlign: 'center', marginTop: 18, minWidth: 180 },
+  loadBg: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' },
+  loadBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingHorizontal: 22, paddingVertical: 14, borderRadius: 12 },
+});
