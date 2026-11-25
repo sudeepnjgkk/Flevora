@@ -14,7 +14,7 @@ import { RepostModal, ReelMenuModal, LikesPlaysModal } from '../constants/ReelMo
 const { height: H } = Dimensions.get('window');
 const useIsFocused = () => { const [f, sF] = useState(true); useFocusEffect(React.useCallback(() => { sF(true); return () => sF(false); }, [])); return f; };
 
-function ReelItem({ item, active, me, hasStory, onOpenStory, onComment, onRepost, onOpenLikes, onShare, onSave, onMenu, captions, fullscreen }: any) {
+function ReelItem({ item, owner, active, me, hasStory, onOpenStory, onComment, onRepost, onOpenLikes, onShare, onSave, onMenu, captions, fullscreen }: any) {
   const router = useRouter();
   const uid = auth.currentUser?.uid || '';
   const player = useVideoPlayer(item.mediaUrl, (p) => { p.loop = true; });
@@ -32,8 +32,10 @@ function ReelItem({ item, active, me, hasStory, onOpenStory, onComment, onRepost
   const reposted = (item.reposts || []).includes(uid);
   const saved = (me?.savedPosts || []).includes(item.id);
   const isF = (me?.following || []).includes(item.uid);
+  const av = owner?.photoUrl || owner?.avatar || item.userPhoto || item.userAvatar;
+  const openProf = () => router.push((item.uid === uid ? '/profile' : `/user/${item.uid}`) as any);
 
-  const toggleLike = () => updateDoc(doc(db, 'posts', item.id), { likes: liked ? arrayRemove(uid) : arrayUnion(uid) }).catch((e) => Alert.alert('Error', e?.message || 'Could not like'));
+  const toggleLike = () => updateDoc(doc(db, 'posts', item.id), { likes: liked ? arrayRemove(uid) : arrayUnion(uid) }).catch((e) => Alert.alert('Error', e?.message));
 
   const handleTap = (e: any) => {
     const now = Date.now();
@@ -68,10 +70,10 @@ function ReelItem({ item, active, me, hasStory, onOpenStory, onComment, onRepost
         <View style={s.bottom}>
           {reposted && <TouchableOpacity onPress={() => onRepost(item, false)} style={s.thoughtPill}><Text style={{ color: '#fff', fontSize: 12 }}>{item.repostThoughts?.[uid] || 'Add a thought...'}</Text></TouchableOpacity>}
           <View style={s.userRow}>
-            <TouchableOpacity onPress={() => (hasStory ? onOpenStory(item.uid) : router.push(`/user/${item.uid}` as any))} style={[s.ring, hasStory && { borderColor: BRAND, borderWidth: 2 }]}>
-              {item.userPhoto ? <Image source={{ uri: item.userPhoto }} style={s.av} /> : <View style={[s.av, s.ph]}><Ionicons name="person" size={16} color="#fff" /></View>}
+            <TouchableOpacity onPress={() => (hasStory ? onOpenStory(item.uid) : openProf())} style={[s.ring, hasStory && { borderColor: BRAND, borderWidth: 2 }]}>
+              {av ? <Image source={{ uri: av }} style={s.av} /> : <View style={[s.av, s.ph]}><Ionicons name="person" size={16} color="#fff" /></View>}
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => router.push(`/user/${item.uid}` as any)}><Text style={s.uname}>@{item.username}</Text></TouchableOpacity>
+            <TouchableOpacity onPress={openProf}><Text style={s.uname}>@{owner?.username || item.username}</Text></TouchableOpacity>
             {item.uid !== uid && <TouchableOpacity onPress={() => updateDoc(doc(db, 'users', uid), { following: isF ? arrayRemove(item.uid) : arrayUnion(item.uid) })} style={s.fBtn}><Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{isF ? 'Following' : 'Follow'}</Text></TouchableOpacity>}
           </View>
           <Text style={s.cap} numberOfLines={2}>{item.caption}</Text>
@@ -128,7 +130,7 @@ export default function ReelsScreen() {
     <View style={{ flex: 1, backgroundColor: '#000' }}>
       <FlatList data={ordered} keyExtractor={(i) => i.id} pagingEnabled showsVerticalScrollIndicator={false}
         onViewableItemsChanged={({ viewableItems }) => viewableItems[0] && setActiveIdx(viewableItems[0].index || 0)}
-        renderItem={({ item, index }) => <ReelItem item={item} active={isFocused && index === activeIdx} me={me} hasStory={stories.some((st) => st.uid === item.uid)} captions={captions} fullscreen={fullscreen} onOpenStory={(u: string) => setStoryOpen(stories.filter((st) => st.uid === u))} onComment={setCommentPost} onRepost={handleRepost} onOpenLikes={setLikesItem} onShare={setSharePost} onSave={(p: any) => updateDoc(doc(db, 'users', uid), { savedPosts: (me.savedPosts || []).includes(p.id) ? arrayRemove(p.id) : arrayUnion(p.id) }).catch((e) => Alert.alert('Error', e?.message))} onMenu={setMenuItem} />}
+        renderItem={({ item, index }) => <ReelItem item={item} owner={users.find((u) => u.id === item.uid)} active={isFocused && index === activeIdx} me={me} hasStory={stories.some((st) => st.uid === item.uid)} captions={captions} fullscreen={fullscreen} onOpenStory={(u: string) => setStoryOpen(stories.filter((st) => st.uid === u))} onComment={setCommentPost} onRepost={handleRepost} onOpenLikes={setLikesItem} onShare={setSharePost} onSave={(p: any) => updateDoc(doc(db, 'users', uid), { savedPosts: (me.savedPosts || []).includes(p.id) ? arrayRemove(p.id) : arrayUnion(p.id) }).catch((e) => Alert.alert('Error', e?.message))} onMenu={setMenuItem} />}
       />
       {commentPost && <CommentModal {...({ visible: !!commentPost, post: commentPost, postId: commentPost.id, onClose: () => setCommentPost(null) } as any)} />}
       {sharePost && <ShareModal visible={!!sharePost} post={sharePost} onClose={() => setSharePost(null)} />}
@@ -154,4 +156,3 @@ const s = StyleSheet.create({
   cap: { color: '#fff', fontSize: 13 }, ccBox: { backgroundColor: 'rgba(0,0,0,0.65)', color: '#fff', padding: 6, borderRadius: 6, marginTop: 6, fontSize: 12 },
   addCmt: { marginTop: 10, backgroundColor: 'rgba(255,255,255,0.14)', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, width: '115%' },
 });
-          
