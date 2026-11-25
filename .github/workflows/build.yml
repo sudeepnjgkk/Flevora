@@ -9,11 +9,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
       - name: Build Android APK
         working-directory: flevora-app
-        run: npm install && eas build -p android --profile preview --non-interactive
-        
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: npm install && npx eas-cli build -p android --profile preview --non-interactive
