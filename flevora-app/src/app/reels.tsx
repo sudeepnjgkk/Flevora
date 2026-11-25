@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Pressable, Image, Dimensions, StyleSheet, Animated, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, addDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { BRAND, useTheme } from '../constants/theme';
@@ -76,6 +76,7 @@ function ReelItem({ item, active, me, hasStory, onOpenStory, onComment, onRepost
           </View>
           <Text style={s.cap} numberOfLines={2}>{item.caption}</Text>
           {captions && !!item.caption && <Text style={s.ccBox}>{item.caption}</Text>}
+          <TouchableOpacity onPress={() => onComment(item)} style={s.addCmt}><Text style={{ color: '#D1D5DB', fontSize: 13 }}>Add comment...</Text></TouchableOpacity>
         </View>
       )}
     </View>
@@ -84,6 +85,7 @@ function ReelItem({ item, active, me, hasStory, onOpenStory, onComment, onRepost
 
 export default function ReelsScreen() {
   const router = useRouter();
+  const { startId } = useLocalSearchParams<{ startId?: string }>();
   const { c } = useTheme();
   const isFocused = useIsFocused();
   const uid = auth.currentUser?.uid || '';
@@ -110,19 +112,21 @@ export default function ReelsScreen() {
     return () => { u1(); u2(); u3(); u4(); };
   }, [uid]);
 
+  const ordered = startId ? [...reels.filter((r) => r.id === startId), ...reels.filter((r) => r.id !== startId)] : reels;
+
   const handleRepost = async (item: any, alreadyReposted: boolean) => {
     if (!uid) return;
     if (alreadyReposted) {
-      await updateDoc(doc(db, 'posts', item.id), { reposts: arrayRemove(uid) }).catch((e) => Alert.alert('Error', e?.message || 'Update Firestore rules'));
+      await updateDoc(doc(db, 'posts', item.id), { reposts: arrayRemove(uid) }).catch((e) => Alert.alert('Error', e?.message));
     } else {
-      await updateDoc(doc(db, 'posts', item.id), { reposts: arrayUnion(uid) }).catch((e) => Alert.alert('Error', e?.message || 'Update Firestore rules'));
+      await updateDoc(doc(db, 'posts', item.id), { reposts: arrayUnion(uid) }).catch((e) => Alert.alert('Error', e?.message));
       setRepostItem(item);
     }
   };
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
-      <FlatList data={reels} keyExtractor={(i) => i.id} pagingEnabled showsVerticalScrollIndicator={false}
+      <FlatList data={ordered} keyExtractor={(i) => i.id} pagingEnabled showsVerticalScrollIndicator={false}
         onViewableItemsChanged={({ viewableItems }) => viewableItems[0] && setActiveIdx(viewableItems[0].index || 0)}
         renderItem={({ item, index }) => <ReelItem item={item} active={isFocused && index === activeIdx} me={me} hasStory={stories.some((st) => st.uid === item.uid)} captions={captions} fullscreen={fullscreen} onOpenStory={(u: string) => setStoryOpen(stories.filter((st) => st.uid === u))} onComment={setCommentPost} onRepost={handleRepost} onOpenLikes={setLikesItem} onShare={setSharePost} onSave={(p: any) => updateDoc(doc(db, 'users', uid), { savedPosts: (me.savedPosts || []).includes(p.id) ? arrayRemove(p.id) : arrayUnion(p.id) }).catch((e) => Alert.alert('Error', e?.message))} onMenu={setMenuItem} />}
       />
@@ -139,7 +143,7 @@ export default function ReelsScreen() {
 const s = StyleSheet.create({
   reel: { height: H - 56, backgroundColor: '#000', justifyContent: 'flex-end' },
   tapHeart: { position: 'absolute', zIndex: 20 },
-  actions: { position: 'absolute', right: 12, bottom: 26, alignItems: 'center', gap: 12, zIndex: 25, elevation: 12 },
+  actions: { position: 'absolute', right: 12, bottom: 56, alignItems: 'center', gap: 12, zIndex: 25, elevation: 12 },
   actBtn: { alignItems: 'center', padding: 2 }, cnt: { color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 2 },
   bottom: { padding: 14, paddingRight: 72, zIndex: 15 },
   thoughtPill: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 16, alignSelf: 'flex-start', marginBottom: 8 },
@@ -148,5 +152,6 @@ const s = StyleSheet.create({
   uname: { color: '#fff', fontWeight: '700', fontSize: 15 },
   fBtn: { borderWidth: 1, borderColor: '#fff', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 3 },
   cap: { color: '#fff', fontSize: 13 }, ccBox: { backgroundColor: 'rgba(0,0,0,0.65)', color: '#fff', padding: 6, borderRadius: 6, marginTop: 6, fontSize: 12 },
+  addCmt: { marginTop: 10, backgroundColor: 'rgba(255,255,255,0.14)', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, width: '115%' },
 });
-    
+          
