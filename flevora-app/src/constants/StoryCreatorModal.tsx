@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Modal, View, Text, TouchableOpacity, Image, TextInput, ScrollView, StyleSheet, Alert } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, Image, TextInput, ScrollView, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
@@ -49,6 +49,7 @@ export function StoryCreatorModal({ visible, onClose, uid, user, me }: any) {
           filter: FILTERS[fxIdx].name, audience, viewers: [], viewerNames: [], likes: [], comments: [], reactions: [], createdAt: serverTimestamp(),
         });
         setMedia(null); setTxt(''); setBusy(false); onClose();
+        Alert.alert('Story Added', 'Aapki story lag gayi hai!');
       } catch (e: any) { setBusy(false); Alert.alert('Upload Failed', e?.message || 'Could not upload story.'); }
     };
     xhr.send(data);
@@ -65,10 +66,15 @@ export function StoryCreatorModal({ visible, onClose, uid, user, me }: any) {
 
         {media ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <Image source={{ uri: media.uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            {media.type === 'video' ? (
+              <View style={{ alignItems: 'center', gap: 10 }}><Ionicons name="videocam" size={64} color="#fff" /><Text style={{ color: '#fff', fontWeight: '600' }}>Video selected</Text></View>
+            ) : (
+              <Image source={{ uri: media.uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            )}
             <View style={[StyleSheet.absoluteFill, { backgroundColor: FILTERS[fxIdx].tint }]} pointerEvents="none" />
             {!!txt && <Text style={s.overlay}>{txt}</Text>}
             {askTxt && <TextInput value={txt} onChangeText={setTxt} placeholder="Type text..." placeholderTextColor="#ccc" style={s.txtInp} />}
+            {busy && <View style={s.loader}><ActivityIndicator size="large" color="#fff" /><Text style={{ color: '#fff', marginTop: 10, fontWeight: '700' }}>Uploading story...</Text></View>}
           </View>
         ) : (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16 }}>
@@ -103,6 +109,7 @@ const s = StyleSheet.create({
   aaBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
   overlay: { color: '#fff', fontSize: 22, fontWeight: '800', backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 10 },
   txtInp: { position: 'absolute', bottom: 30, width: '80%', backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', borderRadius: 12, padding: 12 },
+  loader: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', alignItems: 'center', zIndex: 20 },
   pickBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: BRAND, paddingHorizontal: 26, paddingVertical: 14, borderRadius: 24 },
   pTxt: { color: '#fff', fontWeight: '700' },
   fChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.5)', borderWidth: 1.5, borderColor: 'transparent' },
