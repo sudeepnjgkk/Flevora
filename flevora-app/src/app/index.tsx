@@ -7,6 +7,7 @@ import { collection, query, orderBy, limit, onSnapshot, doc, updateDoc, arrayUni
 import { auth, db } from '../config';
 import { FeedHeader, CommentModal } from '../constants/FeedHeader';
 import { ShareModal } from '../constants/ShareModal';
+import { StoryViewerModal } from '../constants/StoryViewerModal';
 import { useTheme, BRAND } from '../constants/theme';
 import { sendPush } from '../constants/push';
 
@@ -37,11 +38,13 @@ export default function HomeScreen() {
   const { c } = useTheme();
   const uid = auth.currentUser?.uid || '';
   const [posts, setPosts] = useState<any[]>([]);
+  const [stories, setStories] = useState<any[]>([]);
   const [userMap, setUserMap] = useState<Record<string, any>>({});
   const [me, setMe] = useState<any>(null);
   const [limitCount, setLimitCount] = useState(12);
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
   const [sharePost, setSharePost] = useState<any>(null);
+  const [storyOpen, setStoryOpen] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const lastTap = useRef<number>(0);
 
@@ -53,7 +56,8 @@ export default function HomeScreen() {
       setUserMap(m);
       if (uid && m[uid]) setMe(m[uid]);
     });
-    return () => { u1(); u2(); };
+    const u3 = onSnapshot(collection(db, 'stories'), (s) => setStories(s.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return () => { u1(); u2(); u3(); };
   }, [uid, limitCount]);
 
   const toggleLike = async (post: any) => {
@@ -104,15 +108,32 @@ export default function HomeScreen() {
           const isFollowing = myFollowing.has(item.uid);
           const imgs: string[] = item.media?.length ? item.media : [item.mediaUrl];
           const firstTag = Array.isArray(item.hashtags) && item.hashtags[0];
-          const av = item.userPhoto || item.userAvatar || userMap[item.uid]?.photoUrl;
+          const owner = userMap[item.uid];
+          const av = owner?.photoUrl || owner?.avatar || item.userPhoto || item.userAvatar;
+          const uStories = stories.filter((st) => st.uid === item.uid);
+          const hasStory = uStories.length > 0;
+          const isMuted = (me?.mutedUsers || []).includes(item.uid);
+          const openProf = () => router.push((item.uid === uid ? '/profile' : `/user/${item.uid}`) as any);
+          const toggleMuteUser = () => uid && updateDoc(doc(db, 'users', uid), { mutedUsers: isMuted ? arrayRemove(item.uid) : arrayUnion(item.uid) });
+          const onAvLong = () => Alert.alert(`@${owner?.username || item.username}`, 'Choose an option', [
+            ...(hasStory ? [{ text: 'View Story', onPress: () => setStoryOpen(uStories) }] : []),
+            { text: 'View Profile', onPress: openProf },
+            { text: isMuted ? 'Unmute' : 'Mute', onPress: toggleMuteUser },
+            { text: 'Cancel', style: 'cancel' as const },
+          ]);
 
           return (
             <View style={[styles.card, { borderBottomColor: c.border }]}>
               <View style={styles.head}>
-                <TouchableOpacity style={styles.userRow} onPress={() => router.navigate(`/user/${item.uid}` as any)}>
-                  {av ? <Image source={{ uri: av }} style={styles.avatar} /> : <View style={[styles.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Text style={{ color: '#fff', fontWeight: '700' }}>{(item.username || 'U')[0].toUpperCase()}</Text></View>}
-                  <View><Text style={{ color: c.text, fontWeight: '700' }}>@{item.username}</Text>{!!item.location && <Text style={{ color: c.muted, fontSize: 11 }}>{item.location}</Text>}</View>
-                </TouchableOpacity>
+                <View style={styles.userRow}>
+                  <TouchableOpacity onPress={() => (hasStory ? setStoryOpen(uStories) : openProf())} onLongPress={onAvLong} style={[styles.ring, hasStory && { borderColor: BRAND, borderWidth: 2 }]}>
+                    {av ? <Image source={{ uri: av }} style={styles.avatar} /> : <View style={[styles.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Text style={{ color: '#fff', fontWeight: '700' }}>{(owner?.username || item.username || 'U')[0].toUpperCase()}</Text></View>}
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={openProf}>
+                    <Text style={{ color: c.text, fontWeight: '700' }}>@{owner?.username || item.username}</Text>
+                    {!!item.location && <Text style={{ color: c.muted, fontSize: 11 }}>{item.location}</Text>}
+                  </TouchableOpacity>
+                </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   {item.uid !== uid && <TouchableOpacity onPress={() => toggleFollow(item.uid)}><Text style={{ color: isFollowing ? c.muted : BRAND, fontWeight: '700', fontSize: 13 }}>{isFollowing ? 'Following' : 'Follow'}</Text></TouchableOpacity>}
                   <TouchableOpacity onPress={() => openOptions(item.id)}><Ionicons name="ellipsis-vertical" size={18} color={c.muted} /></TouchableOpacity>
@@ -138,7 +159,7 @@ export default function HomeScreen() {
 
               <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
                 <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>{item.likes?.length || 0} likes</Text>
-                {!!item.caption && <Text style={{ color: c.text, marginTop: 3 }}><Text style={{ fontWeight: '700' }}>@{item.username} </Text>{item.caption}</Text>}
+                {!!item.caption && <Text style={{ color: c.text, marginTop: 3 }}><Text onPress={openProf} style={{ fontWeight: '700' }}>@{owner?.username || item.username} </Text>{item.caption}</Text>}
                 {!!firstTag && <TouchableOpacity onPress={() => router.navigate({ pathname: '/explore' as any, params: { q: firstTag } })}><Text style={{ color: BRAND, fontSize: 12, marginTop: 3, fontWeight: '600' }}>{item.hashtags.join(' ')}</Text></TouchableOpacity>}
                 <Text style={{ color: c.muted, fontSize: 11, marginTop: 4 }}>{formatTime(item.createdAt)}</Text>
               </View>
@@ -148,6 +169,7 @@ export default function HomeScreen() {
       />
       <CommentModal postId={commentPostId} onClose={() => setCommentPostId(null)} />
       <ShareModal post={sharePost} onClose={() => setSharePost(null)} />
+      {storyOpen.length > 0 && <StoryViewerModal {...({ visible: true, stories: storyOpen, initialIndex: 0, myUid: uid, me, c, onClose: () => setStoryOpen([]) } as any)} />}
     </View>
   );
 }
@@ -155,7 +177,8 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 }, card: { borderBottomWidth: 1, marginBottom: 6 },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: 10 }, avatar: { width: 36, height: 36, borderRadius: 18 },
+  userRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  ring: { padding: 2, borderRadius: 22 }, avatar: { width: 36, height: 36, borderRadius: 18 },
   media: { width: W, height: W * 1.15, backgroundColor: '#000' },
   muteBtn: { position: 'absolute', right: 12, bottom: 12, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
   actions: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 10 },
