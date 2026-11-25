@@ -1,109 +1,87 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND } from './theme';
 import { StoryCreatorModal } from './StoryCreatorModal';
 import { StoryViewerModal } from './StoryViewerModal';
+import { NotificationModal } from './NotificationModal';
 
 export { CommentModal } from './CommentModal';
 
 export function FeedHeader() {
-  const router = useRouter();
-    const { c } = useTheme();
-      const uid = auth.currentUser?.uid || '';
-        const [me, setMe] = useState<any>(null);
-          const [stories, setStories] = useState<any[]>([]);
-            const [activeIdx, setActiveIdx] = useState<number | null>(null);
-              const [createOpen, setCreateOpen] = useState(false);
-                const [hasUnread, setHasUnread] = useState(false);
+  const { c } = useTheme();
+  const uid = auth.currentUser?.uid || '';
+  const [me, setMe] = useState<any>({});
+  const [stories, setStories] = useState<any[]>([]);
+  const [hasUnread, setHasUnread] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [showNotif, setShowNotif] = useState(false);
+  const [viewIdx, setViewIdx] = useState<number | null>(null);
 
-                  useEffect(() => {
-                      const u1 = onSnapshot(query(collection(db, 'stories'), orderBy('createdAt', 'desc')), (snap) => {
-                            const now = Date.now();
-                                  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((s: any) => {
-                                          if (s.expiresAt && s.expiresAt <= now) return false;
-                                                  if (s.closeFriendsOnly) return s.uid === uid || (Array.isArray(s.allowedUids) && s.allowedUids.includes(uid));
-                                                          return true;
-                                                                });
-                                                                      setStories(list);
-                                                                          });
-                                                                              if (!uid) return u1;
-                                                                                  const u2 = onSnapshot(query(collection(db, 'notifications'), where('toUid', '==', uid), where('read', '==', false)), (s) => {
-                                                                                        setHasUnread(!s.empty);
-                                                                                            }, () => {});
-                                                                                                const u3 = onSnapshot(doc(db, 'users', uid), (s) => { if (s.exists()) setMe(s.data()); });
-                                                                                                    return () => { u1(); u2(); u3(); };
-                                                                                                      }, [uid]);
+  useEffect(() => {
+    const u1 = onSnapshot(query(collection(db, 'stories'), orderBy('createdAt', 'desc')), (s) => {
+      setStories(s.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    const u2 = uid ? onSnapshot(doc(db, 'users', uid), (s) => s.exists() && setMe(s.data())) : () => {};
+    const u3 = uid ? onSnapshot(query(collection(db, 'notifications'), where('toUid', '==', uid), where('read', '==', false)), (s) => setHasUnread(!s.empty), () => {}) : () => {};
+    return () => { u1(); u2(); u3(); };
+  }, [uid]);
 
-                                                                                                        const openStory = (i: number) => {
-                                                                                                            setActiveIdx(i);
-                                                                                                                if (stories[i] && uid) {
-                                                                                                                      updateDoc(doc(db, 'stories', stories[i].id), {
-                                                                                                                              viewers: arrayUnion(uid), viewerNames: arrayUnion(me?.username || 'user'),
-                                                                                                                                    }).catch(() => {});
-                                                                                                                                        }
-                                                                                                                                          };
+  const myStoryIdx = stories.findIndex((st) => st.uid === uid);
+  const otherStories = stories.filter((st) => st.uid !== uid);
+  const av = me?.photoUrl || me?.avatar;
 
-                                                                                                                                            return (
-                                                                                                                                                <View style={{ backgroundColor: c.background }}>
-                                                                                                                                                      <View style={[styles.topBar, { borderBottomColor: c.border }]}>
-                                                                                                                                                              <TouchableOpacity hitSlop={14} onPress={() => router.push('/upload' as any)}>
-                                                                                                                                                                        <Ionicons name="add" size={28} color={c.text} />
-                                                                                                                                                                                </TouchableOpacity>
-                                                                                                                                                                                        <Text style={styles.logo}>Flevora</Text>
-                                                                                                                                                                                                <TouchableOpacity hitSlop={14} onPress={() => router.push('/notification' as any)}>
-                                                                                                                                                                                                          <Ionicons name="heart-outline" size={25} color={c.text} />
-                                                                                                                                                                                                                    {hasUnread && <View style={styles.dot} />}
-                                                                                                                                                                                                                            </TouchableOpacity>
-                                                                                                                                                                                                                                  </View>
+  return (
+    <View style={{ backgroundColor: c.background }}>
+      <View style={s.top}>
+        <TouchableOpacity onPress={() => setShowCreate(true)} hitSlop={12}><Ionicons name="add" size={28} color={c.text} /></TouchableOpacity>
+        <Text style={[s.logo, { color: c.text }]}>Flevora</Text>
+        <TouchableOpacity onPress={() => setShowNotif(true)} hitSlop={12} style={{ position: 'relative' }}>
+          <Ionicons name="heart-outline" size={26} color={c.text} />
+          {hasUnread && <View style={s.dot} />}
+        </TouchableOpacity>
+      </View>
 
-                                                                                                                                                                                                                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.storyBar, { borderBottomColor: c.border }]}>
-                                                                                                                                                                                                                                                <TouchableOpacity style={styles.storyItem} onPress={() => setCreateOpen(true)}>
-                                                                                                                                                                                                                                                          <View>
-                                                                                                                                                                                                                                                                      {me?.avatar ? <Image source={{ uri: me.avatar }} style={styles.myStoryImg} /> : (
-                                                                                                                                                                                                                                                                                    <View style={[styles.myStoryImg, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
-                                                                                                                                                                                                                                                                                                    <Text style={{ color: '#fff', fontSize: 22, fontWeight: '700' }}>{(me?.username || 'F')[0].toUpperCase()}</Text>
-                                                                                                                                                                                                                                                                                                                  </View>
-                                                                                                                                                                                                                                                                                                                              )}
-                                                                                                                                                                                                                                                                                                                                          <View style={[styles.addBadge, { borderColor: c.background }]}>
-                                                                                                                                                                                                                                                                                                                                                        <Ionicons name="add" size={14} color="#fff" />
-                                                                                                                                                                                                                                                                                                                                                                    </View>
-                                                                                                                                                                                                                                                                                                                                                                              </View>
-                                                                                                                                                                                                                                                                                                                                                                                        <Text style={[styles.storyName, { color: c.text }]}>Your story</Text>
-                                                                                                                                                                                                                                                                                                                                                                                                </TouchableOpacity>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
+        <TouchableOpacity style={s.item} onPress={() => (myStoryIdx >= 0 ? setViewIdx(myStoryIdx) : setShowCreate(true))}>
+          <View style={[s.ring, myStoryIdx >= 0 && { borderColor: BRAND, borderWidth: 2.5 }]}>
+            {av ? <Image source={{ uri: av }} style={s.av} /> : <View style={[s.av, s.ph]}><Ionicons name="person" size={26} color="#fff" /></View>}
+            <TouchableOpacity style={s.plus} onPress={() => setShowCreate(true)}><Ionicons name="add" size={14} color="#fff" /></TouchableOpacity>
+          </View>
+          <Text style={[s.lbl, { color: c.muted }]}>Your story</Text>
+        </TouchableOpacity>
 
-                                                                                                                                                                                                                                                                                                                                                                                                        {stories.map((s, i) => {
-                                                                                                                                                                                                                                                                                                                                                                                                                  const thumb = s.mediaType === 'video' ? (s.mediaUrl || '').replace(/\.(mp4|mov|webm)$/i, '.jpg') : s.mediaUrl;
-                                                                                                                                                                                                                                                                                                                                                                                                                            return (
-                                                                                                                                                                                                                                                                                                                                                                                                                                        <TouchableOpacity key={s.id} style={styles.storyItem} onPress={() => openStory(i)}>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                      <View style={[styles.storyRing, { borderColor: s.closeFriendsOnly ? '#10B981' : BRAND }]}>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                      <Image source={{ uri: thumb }} style={styles.storyThumb} />
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    </View>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  <Text style={[styles.storyName, { color: c.text }]} numberOfLines={1}>{s.username}</Text>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              </TouchableOpacity>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        );
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                })}
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      </ScrollView>
+        {otherStories.map((st) => {
+          const idx = stories.findIndex((x) => x.id === st.id);
+          return (
+            <TouchableOpacity key={st.id} style={s.item} onPress={() => setViewIdx(idx)}>
+              <View style={[s.ring, { borderColor: BRAND, borderWidth: 2.5 }]}>
+                {st.userPhoto ? <Image source={{ uri: st.userPhoto }} style={s.av} /> : <View style={[s.av, s.ph]}><Ionicons name="person" size={26} color="#fff" /></View>}
+              </View>
+              <Text style={[s.lbl, { color: c.text }]} numberOfLines={1}>{st.username || 'User'}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            <StoryCreatorModal visible={createOpen} uid={uid} me={me} onClose={() => setCreateOpen(false)} />
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  <StoryViewerModal stories={stories} activeIdx={activeIdx} setActiveIdx={setActiveIdx} uid={uid} me={me} />
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      </View>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        );
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        }
+      <StoryCreatorModal visible={showCreate} onClose={() => setShowCreate(false)} uid={uid} user={me} me={me} />
+      <NotificationModal visible={showNotif} onClose={() => setShowNotif(false)} c={c} />
+      {viewIdx !== null && <StoryViewerModal {...({ visible: true, stories, initialIndex: viewIdx, myUid: uid, me, c, onClose: () => setViewIdx(null) } as any)} />}
+    </View>
+  );
+}
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        const styles = StyleSheet.create({
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingTop: 48, paddingBottom: 10, borderBottomWidth: 1 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            logo: { fontSize: 24, fontWeight: '800', color: BRAND },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444', position: 'absolute', top: 0, right: 0 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                storyBar: { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  storyItem: { alignItems: 'center', marginRight: 14, width: 64 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    myStoryImg: { width: 58, height: 58, borderRadius: 29 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      addBadge: { position: 'absolute', bottom: 0, right: 0, width: 20, height: 20, borderRadius: 10, backgroundColor: '#111827', borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        storyRing: { width: 60, height: 60, borderRadius: 30, borderWidth: 2.5, justifyContent: 'center', alignItems: 'center', padding: 2 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          storyThumb: { width: 51, height: 51, borderRadius: 26 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            storyName: { fontSize: 11, marginTop: 4 },
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            });
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
+const s = StyleSheet.create({
+  top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 46, paddingBottom: 8, paddingHorizontal: 16 },
+  logo: { fontSize: 22, fontWeight: '800', letterSpacing: 0.3 },
+  dot: { position: 'absolute', top: 0, right: 0, width: 9, height: 9, borderRadius: 5, backgroundColor: '#EF4444' },
+  row: { paddingHorizontal: 12, paddingVertical: 8, gap: 14 },
+  item: { alignItems: 'center', width: 70 },
+  ring: { padding: 2.5, borderRadius: 36, position: 'relative' },
+  av: { width: 62, height: 62, borderRadius: 31 },
+  ph: { backgroundColor: BRAND, alignItems: 'center', justifyContent: 'center' },
+  plus: { position: 'absolute', right: 0, bottom: 0, width: 22, height: 22, borderRadius: 11, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
+  lbl: { fontSize: 11, marginTop: 4 },
+});
