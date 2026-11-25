@@ -33,7 +33,7 @@ function ReelItem({ item, active, me, hasStory, onOpenStory, onComment, onRepost
   const saved = (me?.savedPosts || []).includes(item.id);
   const isF = (me?.following || []).includes(item.uid);
 
-  const toggleLike = () => updateDoc(doc(db, 'posts', item.id), { likes: liked ? arrayRemove(uid) : arrayUnion(uid) }).catch(() => {});
+  const toggleLike = () => updateDoc(doc(db, 'posts', item.id), { likes: liked ? arrayRemove(uid) : arrayUnion(uid) }).catch((e) => Alert.alert('Error', e?.message || 'Could not like'));
 
   const handleTap = (e: any) => {
     const now = Date.now();
@@ -54,13 +54,13 @@ function ReelItem({ item, active, me, hasStory, onOpenStory, onComment, onRepost
 
       {!fullscreen && (
         <View style={s.actions}>
-          <TouchableOpacity onPress={toggleLike} style={s.actBtn}><Ionicons name={liked ? 'heart' : 'heart-outline'} size={30} color={liked ? '#EF4444' : '#fff'} /></TouchableOpacity>
-          <TouchableOpacity onPress={() => onOpenLikes(item)} style={s.actBtn}><Text style={s.cnt}>Likes</Text></TouchableOpacity>
-          <TouchableOpacity onPress={() => onComment(item)} style={s.actBtn}><Ionicons name="chatbubble-outline" size={28} color="#fff" /><Text style={s.cnt}>{item.commentsCount || 0}</Text></TouchableOpacity>
-          <TouchableOpacity onPress={() => onRepost(item, reposted)} style={s.actBtn}><Ionicons name="repeat" size={28} color={reposted ? '#10B981' : '#fff'} /><Text style={s.cnt}>{(item.reposts || []).length}</Text></TouchableOpacity>
-          <TouchableOpacity onPress={() => onShare(item)} style={s.actBtn}><Ionicons name="paper-plane-outline" size={27} color="#fff" /></TouchableOpacity>
-          <TouchableOpacity onPress={() => onSave(item)} style={s.actBtn}><Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={27} color={saved ? BRAND : '#fff'} /></TouchableOpacity>
-          <TouchableOpacity onPress={() => onMenu(item)} style={s.actBtn}><Ionicons name="reorder-two-outline" size={28} color="#fff" /></TouchableOpacity>
+          <TouchableOpacity onPress={toggleLike} hitSlop={8} style={s.actBtn}><Ionicons name={liked ? 'heart' : 'heart-outline'} size={30} color={liked ? '#EF4444' : '#fff'} /></TouchableOpacity>
+          <TouchableOpacity onPress={() => onOpenLikes(item)} hitSlop={8} style={s.actBtn}><Text style={s.cnt}>Likes</Text></TouchableOpacity>
+          <TouchableOpacity onPress={() => onComment(item)} hitSlop={8} style={s.actBtn}><Ionicons name="chatbubble-outline" size={28} color="#fff" /><Text style={s.cnt}>{item.commentsCount || 0}</Text></TouchableOpacity>
+          <TouchableOpacity onPress={() => onRepost(item, reposted)} hitSlop={8} style={s.actBtn}><Ionicons name="repeat" size={28} color={reposted ? '#10B981' : '#fff'} /><Text style={s.cnt}>{(item.reposts || []).length}</Text></TouchableOpacity>
+          <TouchableOpacity onPress={() => onShare(item)} hitSlop={8} style={s.actBtn}><Ionicons name="paper-plane-outline" size={27} color="#fff" /></TouchableOpacity>
+          <TouchableOpacity onPress={() => onSave(item)} hitSlop={8} style={s.actBtn}><Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={27} color={saved ? BRAND : '#fff'} /></TouchableOpacity>
+          <TouchableOpacity onPress={() => onMenu(item)} hitSlop={8} style={s.actBtn}><Ionicons name="reorder-two-outline" size={28} color="#fff" /></TouchableOpacity>
         </View>
       )}
 
@@ -113,9 +113,9 @@ export default function ReelsScreen() {
   const handleRepost = async (item: any, alreadyReposted: boolean) => {
     if (!uid) return;
     if (alreadyReposted) {
-      await updateDoc(doc(db, 'posts', item.id), { reposts: arrayRemove(uid) }).catch(() => {});
+      await updateDoc(doc(db, 'posts', item.id), { reposts: arrayRemove(uid) }).catch((e) => Alert.alert('Error', e?.message || 'Update Firestore rules'));
     } else {
-      await updateDoc(doc(db, 'posts', item.id), { reposts: arrayUnion(uid) }).catch(() => {});
+      await updateDoc(doc(db, 'posts', item.id), { reposts: arrayUnion(uid) }).catch((e) => Alert.alert('Error', e?.message || 'Update Firestore rules'));
       setRepostItem(item);
     }
   };
@@ -124,9 +124,9 @@ export default function ReelsScreen() {
     <View style={{ flex: 1, backgroundColor: '#000' }}>
       <FlatList data={reels} keyExtractor={(i) => i.id} pagingEnabled showsVerticalScrollIndicator={false}
         onViewableItemsChanged={({ viewableItems }) => viewableItems[0] && setActiveIdx(viewableItems[0].index || 0)}
-        renderItem={({ item, index }) => <ReelItem item={item} active={isFocused && index === activeIdx} me={me} hasStory={stories.some((st) => st.uid === item.uid)} captions={captions} fullscreen={fullscreen} onOpenStory={(u: string) => setStoryOpen(stories.filter((st) => st.uid === u))} onComment={setCommentPost} onRepost={handleRepost} onOpenLikes={setLikesItem} onShare={setSharePost} onSave={(p: any) => updateDoc(doc(db, 'users', uid), { savedPosts: (me.savedPosts || []).includes(p.id) ? arrayRemove(p.id) : arrayUnion(p.id) })} onMenu={setMenuItem} />}
+        renderItem={({ item, index }) => <ReelItem item={item} active={isFocused && index === activeIdx} me={me} hasStory={stories.some((st) => st.uid === item.uid)} captions={captions} fullscreen={fullscreen} onOpenStory={(u: string) => setStoryOpen(stories.filter((st) => st.uid === u))} onComment={setCommentPost} onRepost={handleRepost} onOpenLikes={setLikesItem} onShare={setSharePost} onSave={(p: any) => updateDoc(doc(db, 'users', uid), { savedPosts: (me.savedPosts || []).includes(p.id) ? arrayRemove(p.id) : arrayUnion(p.id) }).catch((e) => Alert.alert('Error', e?.message))} onMenu={setMenuItem} />}
       />
-      {commentPost && <CommentModal visible={!!commentPost} post={commentPost} onClose={() => setCommentPost(null)} />}
+      {commentPost && <CommentModal {...({ visible: !!commentPost, post: commentPost, postId: commentPost.id, onClose: () => setCommentPost(null) } as any)} />}
       {sharePost && <ShareModal visible={!!sharePost} post={sharePost} onClose={() => setSharePost(null)} />}
       {repostItem && <RepostModal visible={!!repostItem} item={repostItem} uid={uid} me={me} c={c} onClose={() => setRepostItem(null)} />}
       {likesItem && <LikesPlaysModal visible={!!likesItem} item={likesItem} allUsers={users} myUid={uid} myFollowing={me.following || []} c={c} onClose={() => setLikesItem(null)} onOpenUser={(id: string) => router.push(`/user/${id}` as any)} onFollow={(id: string) => updateDoc(doc(db, 'users', uid), { following: (me.following || []).includes(id) ? arrayRemove(id) : arrayUnion(id) })} />}
@@ -139,9 +139,9 @@ export default function ReelsScreen() {
 const s = StyleSheet.create({
   reel: { height: H - 56, backgroundColor: '#000', justifyContent: 'flex-end' },
   tapHeart: { position: 'absolute', zIndex: 20 },
-  actions: { position: 'absolute', right: 12, bottom: 26, alignItems: 'center', gap: 12, zIndex: 10 },
-  actBtn: { alignItems: 'center' }, cnt: { color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 2 },
-  bottom: { padding: 14, paddingRight: 72, zIndex: 10 },
+  actions: { position: 'absolute', right: 12, bottom: 26, alignItems: 'center', gap: 12, zIndex: 25, elevation: 12 },
+  actBtn: { alignItems: 'center', padding: 2 }, cnt: { color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 2 },
+  bottom: { padding: 14, paddingRight: 72, zIndex: 15 },
   thoughtPill: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 16, alignSelf: 'flex-start', marginBottom: 8 },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   ring: { padding: 2, borderRadius: 20 }, av: { width: 32, height: 32, borderRadius: 16 }, ph: { backgroundColor: BRAND, alignItems: 'center', justifyContent: 'center' },
@@ -149,3 +149,4 @@ const s = StyleSheet.create({
   fBtn: { borderWidth: 1, borderColor: '#fff', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 3 },
   cap: { color: '#fff', fontSize: 13 }, ccBox: { backgroundColor: 'rgba(0,0,0,0.65)', color: '#fff', padding: 6, borderRadius: 6, marginTop: 6, fontSize: 12 },
 });
+    
