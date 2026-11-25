@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { collection, query, where, orderBy, onSnapshot, doc } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND } from './theme';
@@ -11,6 +12,7 @@ import { NotificationModal } from './NotificationModal';
 export { CommentModal } from './CommentModal';
 
 export function FeedHeader() {
+  const router = useRouter();
   const { c } = useTheme();
   const uid = auth.currentUser?.uid || '';
   const [me, setMe] = useState<any>({});
@@ -36,7 +38,7 @@ export function FeedHeader() {
   return (
     <View style={{ backgroundColor: c.background }}>
       <View style={s.top}>
-        <TouchableOpacity onPress={() => setShowCreate(true)} hitSlop={12}><Ionicons name="add" size={28} color={c.text} /></TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push('/upload')} hitSlop={12}><Ionicons name="add" size={28} color={c.text} /></TouchableOpacity>
         <Text style={[s.logo, { color: c.text }]}>Flevora</Text>
         <TouchableOpacity onPress={() => setShowNotif(true)} hitSlop={12} style={{ position: 'relative' }}>
           <Ionicons name="heart-outline" size={26} color={c.text} />
@@ -78,9 +80,9 @@ const s = StyleSheet.create({
   logo: { fontSize: 22, fontWeight: '800', letterSpacing: 0.3 },
   dot: { position: 'absolute', top: 0, right: 0, width: 9, height: 9, borderRadius: 5, backgroundColor: '#EF4444' },
   row: { paddingHorizontal: 12, paddingVertical: 8, gap: 14 },
-  item: { alignItems: 'center', width: 70 },
-  ring: { padding: 2.5, borderRadius: 36, position: 'relative' },
-  av: { width: 62, height: 62, borderRadius: 31 },
+  item: { alignItems: 'center', width: 72 },
+  ring: { width: 68, height: 68, borderRadius: 34, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  av: { width: 60, height: 60, borderRadius: 30 },
   ph: { backgroundColor: BRAND, alignItems: 'center', justifyContent: 'center' },
   plus: { position: 'absolute', right: 0, bottom: 0, width: 22, height: 22, borderRadius: 11, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
   lbl: { fontSize: 11, marginTop: 4 },
