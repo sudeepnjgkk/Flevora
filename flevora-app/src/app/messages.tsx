@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { collection, query, orderBy, limit, onSnapshot, doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, onSnapshot, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND } from '../constants/theme';
 import { AccountSwitcherModal, SelectMoreModal, NewChatModal } from '../constants/DmModals';
@@ -33,23 +33,27 @@ export default function MessagesScreen() {
   useEffect(() => { if (params.uid) setTargetUid(params.uid); if (params.name) setTargetName(params.name); }, [params.uid, params.name]);
 
   useEffect(() => {
+    setMe(null); setConvos({}); setMsgs([]); setTargetUid(params.uid || '');
+    if (!myUid) return;
     const u1 = onSnapshot(collection(db, 'users'), (s) => setUsers(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((u) => u.id !== myUid)));
-    const u2 = myUid ? onSnapshot(doc(db, 'users', myUid), (s) => {
+    const u2 = onSnapshot(doc(db, 'users', myUid), (s) => {
       if (!s.exists()) return;
       const d = s.data(); setMe(d);
       AsyncStorage.getItem('flevora_accounts').then((raw) => {
         const next = [{ uid: myUid, username: d.username, photoUrl: d.photoUrl }, ...(raw ? JSON.parse(raw) : []).filter((a: any) => a.uid !== myUid)].slice(0, 5);
         setAccounts(next); AsyncStorage.setItem('flevora_accounts', JSON.stringify(next));
       });
-    }) : () => {};
-    const u3 = onSnapshot(collection(db, 'conversations'), (s) => {
-      const m: Record<string, any> = {}; s.docs.forEach((d) => { m[d.id] = d.data(); }); setConvos(m);
     });
+    const u3 = onSnapshot(query(collection(db, 'conversations'), where('participants', 'array-contains', myUid)), (s) => {
+      const m: Record<string, any> = {};
+      s.docs.forEach((d) => { m[d.id] = d.data(); });
+      setConvos(m);
+    }, () => {});
     return () => { u1(); u2(); u3(); };
   }, [myUid]);
 
   useEffect(() => {
-    if (!targetUid || !myUid) return;
+    if (!targetUid || !myUid) return setMsgs([]);
     const chatId = [myUid, targetUid].sort().join('_');
     return onSnapshot(query(collection(db, 'conversations', chatId, 'messages'), orderBy('createdAt', 'desc'), limit(40)), (s) => {
       setMsgs(s.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -59,16 +63,24 @@ export default function MessagesScreen() {
   const isOnline = (u: any) => u?.isOnline || (u?.lastSeen?.toDate ? Date.now() - u.lastSeen.toDate().getTime() < 300000 : false);
   const cats = me?.chatCategories || {}, hidden = me?.hiddenChats || [], spam = me?.spamChats || [], following = me?.following || [];
 
-  const inboxUsers = users.filter((u) => {
-    if (hidden.includes(u.id)) return false;
-    if (inReq && spamView) return spam.includes(u.id);
-    if (spam.includes(u.id)) return false;
-    const isReq = !!convos[[myUid, u.id].sort().join('_')] && !following.includes(u.id) && !cats[u.id];
-    if (inReq) return isReq;
-    if (isReq) return false;
-    const cat = cats[u.id] || 'primary';
-    return tab === 'all' || cat === tab;
-  });
+  const inboxUsers = users
+    .filter((u) => {
+      const chatId = [myUid, u.id].sort().join('_');
+      if (!convos[chatId]) return false;
+      if (hidden.includes(u.id)) return false;
+      if (inReq && spamView) return spam.includes(u.id);
+      if (spam.includes(u.id)) return false;
+      const isReq = !following.includes(u.id) && !cats[u.id];
+      if (inReq) return isReq;
+      if (isReq) return false;
+      const cat = cats[u.id] || 'primary';
+      return tab === 'all' || cat === tab;
+    })
+    .sort((a, b) => {
+      const ta = convos[[myUid, a.id].sort().join('_')]?.updatedAt?.toMillis?.() || 0;
+      const tb = convos[[myUid, b.id].sort().join('_')]?.updatedAt?.toMillis?.() || 0;
+      return tb - ta;
+    });
 
   const handleMore = async (key: string) => {
     if (!myUid || !selected.length) return;
@@ -109,7 +121,7 @@ export default function MessagesScreen() {
 
   const myDp = me?.photoUrl || me?.avatar || '';
   const myNoteActive = me?.note && (!me.note.expiresAt || me.note.expiresAt > Date.now());
-  const noteUsers = users.filter((u) => canSeeNote(u.note, myUid, u.id, me) || isOnline(u));
+  const noteUsers = users.filter((u) => canSeeNote(u.note, myUid, u.id, me) || (following.includes(u.id) && isOnline(u)));
 
   const renderBubble = (note: any) => (
     <View style={[s.noteBubble, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -181,9 +193,11 @@ export default function MessagesScreen() {
       <FlatList
         data={inboxUsers}
         keyExtractor={(u) => u.id}
+        ListEmptyComponent={<Text style={{ color: c.muted, textAlign: 'center', marginTop: 40 }}>No messages yet. Tap ✏️ above to start a chat!</Text>}
         renderItem={({ item }) => {
           const dp = item.photoUrl || item.avatar || '';
           const isSel = selected.includes(item.id);
+          const convo = convos[[myUid, item.id].sort().join('_')];
           return (
             <TouchableOpacity
               style={s.chatRow}
@@ -195,7 +209,7 @@ export default function MessagesScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: c.text, fontWeight: '700', fontSize: 15 }}>{item.username}</Text>
-                <Text style={{ color: c.muted, fontSize: 12 }}>{isOnline(item) ? 'Active now' : 'Tap to message'}</Text>
+                <Text style={{ color: c.muted, fontSize: 12 }} numberOfLines={1}>{convo?.lastMessage || (isOnline(item) ? 'Active now' : 'Tap to message')}</Text>
               </View>
               {selectMode && <Ionicons name={isSel ? 'checkbox' : 'square-outline'} size={22} color={isSel ? BRAND : c.muted} />}
             </TouchableOpacity>
