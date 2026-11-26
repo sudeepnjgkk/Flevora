@@ -4,7 +4,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { collection, query, where, orderBy, onSnapshot, doc } from 'firebase/firestore';
 import { auth, db } from '../config';
-import { useTheme, BRAND } from './theme';
+import { useTheme, BRAND, NEON } from './theme';
+import { FlevoraLogo } from './FlevoraLogo';
+import { GlossyIcon } from './GlossyIcon';
 import { StoryCreatorModal } from './StoryCreatorModal';
 import { StoryViewerModal } from './StoryViewerModal';
 import { NotificationModal } from './NotificationModal';
@@ -59,23 +61,19 @@ export function FeedHeader() {
 
   const myDp = me?.photoUrl || me?.avatar || '';
   const hasMyStory = myStories.length > 0;
-  const myRingColor = hasMyStory ? (myStories[0]?.closeFriendsOnly ? '#10B981' : BRAND) : 'transparent';
+  const myRingColor = hasMyStory ? (myStories[0]?.closeFriendsOnly ? '#10B981' : NEON.magenta) : c.border;
 
   return (
-    <View>
-      <View style={[s.topBar, { backgroundColor: c.background, borderBottomColor: c.border }]}>
-        <TouchableOpacity onPress={() => setUploadOpen(true)} hitSlop={8}>
-          <Ionicons name="add" size={28} color={c.text} />
-        </TouchableOpacity>
-        <Text style={s.logo}>Flevora</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-          <TouchableOpacity onPress={() => setNotifOpen(true)} hitSlop={8}>
-            <Ionicons name="heart-outline" size={24} color={c.text} />
+    <View style={{ backgroundColor: c.background }}>
+      <View style={[s.topBar, { borderBottomColor: c.border }]}>
+        <FlevoraLogo size={32} showText />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <TouchableOpacity onPress={() => setUploadOpen(true)}><GlossyIcon name="add" size={20} boxSize={36} accent={NEON.purple} /></TouchableOpacity>
+          <TouchableOpacity onPress={() => setNotifOpen(true)}>
+            <GlossyIcon name="heart" size={18} boxSize={36} accent={NEON.pink} />
             {hasUnread && <View style={s.dot} />}
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.navigate('/messages' as any)} hitSlop={8}>
-            <Ionicons name="chatbubble-ellipses-outline" size={24} color={c.text} />
-          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.navigate('/messages' as any)}><GlossyIcon name="paper-plane" size={18} boxSize={36} accent={NEON.orange} /></TouchableOpacity>
         </View>
       </View>
 
@@ -83,13 +81,7 @@ export function FeedHeader() {
         <View style={s.storyItem}>
           <TouchableOpacity activeOpacity={0.85} onPress={() => (hasMyStory ? setViewStories(myStories) : setCreatorOpen(true))}>
             <View style={[s.ring, { borderColor: myRingColor }]}>
-              {myDp ? (
-                <Image source={{ uri: myDp }} style={s.avatar} />
-              ) : (
-                <View style={[s.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
-                  <Ionicons name="person" size={28} color="#fff" />
-                </View>
-              )}
+              {myDp ? <Image source={{ uri: myDp }} style={s.avatar} /> : <View style={[s.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={26} color="#fff" /></View>}
             </View>
           </TouchableOpacity>
           <TouchableOpacity style={[s.plusBadge, { borderColor: c.background }]} onPress={() => setCreatorOpen(true)} hitSlop={6}>
@@ -104,7 +96,7 @@ export function FeedHeader() {
           const dp = u?.photoUrl || u?.avatar || first.mediaUrl;
           return (
             <TouchableOpacity key={first.uid} style={s.storyItem} onPress={() => setViewStories(grp)}>
-              <View style={[s.ring, { borderColor: first.closeFriendsOnly ? '#10B981' : BRAND }]}>
+              <View style={[s.ring, { borderColor: first.closeFriendsOnly ? '#10B981' : NEON.pink }]}>
                 <Image source={{ uri: dp }} style={s.avatar} />
               </View>
               <Text style={[s.storyName, { color: c.text }]} numberOfLines={1}>{u?.username || first.username}</Text>
@@ -124,13 +116,12 @@ export function FeedHeader() {
 }
 
 const s = StyleSheet.create({
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingTop: 48, paddingBottom: 10, borderBottomWidth: 1 },
-  logo: { fontSize: 25, fontWeight: '800', color: BRAND },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444', position: 'absolute', top: 0, right: 0 },
-  storyBar: { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1 },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingTop: 48, paddingBottom: 10, borderBottomWidth: 0.5 },
+  dot: { width: 9, height: 9, borderRadius: 4.5, backgroundColor: '#EF4444', position: 'absolute', top: -1, right: -1, borderWidth: 1.5, borderColor: '#fff' },
+  storyBar: { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 0.5 },
   storyItem: { alignItems: 'center', marginRight: 14, width: 70 },
   ring: { width: 68, height: 68, borderRadius: 34, borderWidth: 2.5, justifyContent: 'center', alignItems: 'center', padding: 2 },
   avatar: { width: 60, height: 60, borderRadius: 30 },
-  plusBadge: { position: 'absolute', right: 2, bottom: 18, width: 22, height: 22, borderRadius: 11, backgroundColor: '#111', borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
-  storyName: { fontSize: 11, marginTop: 4 },
+  plusBadge: { position: 'absolute', right: 2, bottom: 18, width: 22, height: 22, borderRadius: 11, backgroundColor: NEON.pink, borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
+  storyName: { fontSize: 11, fontWeight: '600', marginTop: 4 },
 });
