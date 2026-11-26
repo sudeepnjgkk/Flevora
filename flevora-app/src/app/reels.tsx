@@ -7,12 +7,12 @@ import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, arrayUni
 import { auth, db } from '../config';
 import { CommentModal } from '../constants/CommentModal';
 import { ShareModal } from '../constants/ShareModal';
-import { LikesPlaysModal, RepostThoughtModal } from '../constants/ReelModals';
+import { LikesPlaysModal, RepostThoughtModal, ReelOptionsSheet } from '../constants/ReelModals';
 import { BRAND, NEON } from '../constants/theme';
 
-const H = Dimensions.get('window').height - 70;
+const H = Dimensions.get('window').height - 56;
 
-function ReelItem({ item, active, focused, me, owner, onComment, onShare, onLikes, onRepostToast }: any) {
+function ReelItem({ item, active, focused, me, owner, autoScroll, onNextReel, onComment, onShare, onLikes, onRepostToast }: any) {
   const router = useRouter();
   const uid = auth.currentUser?.uid || '';
   const [paused, setPaused] = useState(false);
@@ -20,13 +20,36 @@ function ReelItem({ item, active, focused, me, owner, onComment, onShare, onLike
   const [reposted, setReposted] = useState(Array.isArray(item.reposts) && item.reposts.includes(uid));
   const [repostCount, setRepostCount] = useState(Array.isArray(item.reposts) ? item.reposts.length : 0);
   const [thoughtOpen, setThoughtOpen] = useState(false);
-  const player = useVideoPlayer(item.mediaUrl, (p) => { p.loop = true; });
+  const [optOpen, setOptOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [captions, setCaptions] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [speedLocked, setSpeedLocked] = useState(false);
+  const [holdHint, setHoldHint] = useState('');
+  const [heartPop, setHeartPop] = useState(false);
+
+  const lastTap = useRef(0);
+  const tapTimer = useRef<any>(null);
+  const holdTimer = useRef<any>(null);
+  const startY = useRef(0);
+  const lockedRef = useRef(false);
+  const holdingRef = useRef(false);
+
+  const player = useVideoPlayer(item.mediaUrl, (p) => { p.loop = !autoScroll; p.preservesPitch = true; });
 
   useEffect(() => {
     setLiked(Array.isArray(item.likes) && item.likes.includes(uid));
     setReposted(Array.isArray(item.reposts) && item.reposts.includes(uid));
     setRepostCount(Array.isArray(item.reposts) ? item.reposts.length : 0);
   }, [item.likes, item.reposts, uid]);
+
+  useEffect(() => { player.loop = !autoScroll; }, [autoScroll]);
+  useEffect(() => { player.playbackRate = speed; }, [speed]);
+  useEffect(() => {
+    if (!autoScroll || !active || !focused) return;
+    const sub = player.addListener('playToEnd', () => onNextReel?.());
+    return () => sub.remove();
+  }, [autoScroll, active, focused]);
 
   useEffect(() => {
     if (focused && active && !paused) { player.play(); updateDoc(doc(db, 'posts', item.id), { views: increment(1) }).catch(() => {}); }
@@ -39,15 +62,59 @@ function ReelItem({ item, active, focused, me, owner, onComment, onShare, onLike
   const myAv = me?.photoUrl || me?.avatar || '';
   const ownerAv = owner?.photoUrl || owner?.avatar || item.avatar || '';
 
-  const toggleLike = async () => {
+  const toggleLike = async (forceLike = false) => {
     if (!uid) return;
-    const next = !liked; setLiked(next);
+    if (forceLike && liked) { setHeartPop(true); setTimeout(() => setHeartPop(false), 650); return; }
+    const next = forceLike ? true : !liked;
+    setLiked(next);
+    if (next) { setHeartPop(true); setTimeout(() => setHeartPop(false), 650); }
     try {
       await updateDoc(doc(db, 'posts', item.id), { likes: next ? arrayUnion(uid) : arrayRemove(uid) });
       if (next && item.uid && item.uid !== uid) {
         addDoc(collection(db, 'notifications'), { toUid: item.uid, fromUid: uid, fromUsername: me?.username || 'user', type: 'like', postId: item.id, message: 'liked your reel', read: false, createdAt: serverTimestamp() }).catch(() => {});
       }
     } catch { setLiked(!next); }
+  };
+
+  const handleCenterPress = () => {
+    const now = Date.now();
+    if (now - lastTap.current < 280) {
+      if (tapTimer.current) clearTimeout(tapTimer.current);
+      lastTap.current = 0;
+      toggleLike(true);
+    } else {
+      lastTap.current = now;
+      tapTimer.current = setTimeout(() => setPaused((p) => !p), 270);
+    }
+  };
+
+  const onEdgeStart = (e: any) => {
+    startY.current = e.nativeEvent.pageY;
+    holdingRef.current = false;
+    holdTimer.current = setTimeout(() => {
+      holdingRef.current = true;
+      lockedRef.current = false;
+      setSpeed(2);
+      setHoldHint('2x Speed • Slide down to lock');
+    }, 220);
+  };
+
+  const onEdgeMove = (e: any) => {
+    if (!holdingRef.current) return;
+    const dy = e.nativeEvent.pageY - startY.current;
+    if (dy > 45) { lockedRef.current = true; setHoldHint('🔒 Release to lock 2x speed'); }
+    else if (dy < -25) { lockedRef.current = false; setSpeed(1); setSpeedLocked(false); setHoldHint('1x Normal speed'); }
+    else { lockedRef.current = false; setHoldHint('2x Speed • Slide down to lock'); }
+  };
+
+  const onEdgeEnd = () => {
+    if (holdTimer.current) clearTimeout(holdTimer.current);
+    if (holdingRef.current) {
+      if (lockedRef.current) { setSpeed(2); setSpeedLocked(true); }
+      else { setSpeed(1); setSpeedLocked(false); }
+    }
+    holdingRef.current = false;
+    setHoldHint('');
   };
 
   const toggleRepost = async () => {
@@ -71,42 +138,56 @@ function ReelItem({ item, active, focused, me, owner, onComment, onShare, onLike
   return (
     <View style={s.reel}>
       <VideoView player={player} style={StyleSheet.absoluteFill} surfaceType="textureView" nativeControls={false} contentFit="cover" />
-      <Pressable onPress={() => setPaused((p) => !p)} style={[StyleSheet.absoluteFill, { zIndex: 1 }]} />
-      {paused && <Ionicons name="play" size={56} color="rgba(255,255,255,0.85)" style={s.pauseIcon} pointerEvents="none" />}
+      <Pressable onPress={handleCenterPress} onLongPress={() => setOptOpen(true)} delayLongPress={400} style={[StyleSheet.absoluteFill, { zIndex: 1 }]} />
+      <View onTouchStart={onEdgeStart} onTouchMove={onEdgeMove} onTouchEnd={onEdgeEnd} style={[s.edgeZone, { left: 0 }]} />
+      <View onTouchStart={onEdgeStart} onTouchMove={onEdgeMove} onTouchEnd={onEdgeEnd} style={[s.edgeZone, { right: 0, bottom: 320 }]} />
 
-      <View style={s.rightCol}>
-        <View style={s.actBtn}>
-          <TouchableOpacity onPress={toggleLike} style={[s.glossyPill, liked && { backgroundColor: NEON.pink }]}><Ionicons name={liked ? 'heart' : 'heart-outline'} size={24} color="#fff" /></TouchableOpacity>
-          <TouchableOpacity onPress={onLikes}><Text style={s.actTxt}>Likes</Text></TouchableOpacity>
-        </View>
-        <TouchableOpacity onPress={onComment} style={s.actBtn}><View style={s.glossyPill}><Ionicons name="chatbubble-outline" size={22} color="#fff" /></View><Text style={s.actTxt}>{item.commentsCount || 0}</Text></TouchableOpacity>
-        <TouchableOpacity onPress={toggleRepost} style={s.actBtn}><View style={[s.glossyPill, reposted && { backgroundColor: NEON.purple }]}><Ionicons name="repeat" size={23} color="#fff" /></View><Text style={s.actTxt}>{repostCount}</Text></TouchableOpacity>
-        <TouchableOpacity onPress={toggleSave} style={s.actBtn}><View style={[s.glossyPill, saved && { backgroundColor: NEON.magenta }]}><Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={22} color="#fff" /></View></TouchableOpacity>
-        <TouchableOpacity onPress={onShare} style={s.actBtn}><View style={s.glossyPill}><Ionicons name="paper-plane-outline" size={21} color="#fff" /></View></TouchableOpacity>
-        <TouchableOpacity onPress={() => Alert.alert('Report Reel', 'Report as inappropriate?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Report', style: 'destructive', onPress: () => addDoc(collection(db, 'reports'), { postId: item.id, type: 'reel', status: 'pending', reportedBy: uid, createdAt: serverTimestamp() }) }])} style={s.actBtn}>
-          <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
+      {paused && <Ionicons name="play" size={56} color="rgba(255,255,255,0.85)" style={s.centerIcon} pointerEvents="none" />}
+      {heartPop && <Ionicons name="heart" size={86} color={NEON.pink} style={s.centerIcon} pointerEvents="none" />}
+      {!!holdHint && <View style={s.hintPill}><Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{holdHint}</Text></View>}
+      {speedLocked && !holdHint && (
+        <TouchableOpacity onPress={() => { setSpeed(1); setSpeedLocked(false); }} style={s.hintPill}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>2x 🔒 Tap for 1x</Text>
         </TouchableOpacity>
-      </View>
+      )}
+      {captions && !!item.caption && <View style={s.ccBox}><Text style={{ color: '#fff', fontSize: 13 }}>{item.caption}</Text></View>}
 
-      <View style={s.bottomInfo}>
-        {reposted && (
-          <TouchableOpacity onPress={() => setThoughtOpen(true)} style={s.thoughtTrigger}>
-            <View style={s.thoughtPill}><Text style={{ color: '#111', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{myThought || 'Tag a friend...'}</Text></View>
-            {myAv ? <Image source={{ uri: myAv }} style={s.thoughtMiniAv} /> : <View style={[s.thoughtMiniAv, { backgroundColor: BRAND }]} />}
-          </TouchableOpacity>
-        )}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <TouchableOpacity onPress={() => router.push(`/user/${item.uid}` as any)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {ownerAv ? <Image source={{ uri: ownerAv }} style={s.userAv} /> : <View style={[s.userAv, { backgroundColor: BRAND }]} />}
-            <Text style={s.userTxt}>@{owner?.username || item.username}</Text>
-          </TouchableOpacity>
-          {item.uid !== uid && <TouchableOpacity onPress={toggleFollow} style={[s.followPill, following && { backgroundColor: 'rgba(255,255,255,0.22)' }]}><Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{following ? 'Following' : 'Follow'}</Text></TouchableOpacity>}
-        </View>
-        {!!item.caption && <Text style={s.capTxt} numberOfLines={2}>{item.caption}</Text>}
-        <TouchableOpacity onPress={onComment} style={s.addCommentBar}><Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13 }}>Add comment...</Text></TouchableOpacity>
-      </View>
+      {!fullscreen && (
+        <>
+          <View style={s.bottomInfo} pointerEvents="box-none">
+            {reposted && (
+              <TouchableOpacity onPress={() => setThoughtOpen(true)} style={s.thoughtTrigger}>
+                <View style={s.thoughtPill}><Text style={{ color: '#111', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{myThought || 'Tag a friend...'}</Text></View>
+                {myAv ? <Image source={{ uri: myAv }} style={s.thoughtMiniAv} /> : <View style={[s.thoughtMiniAv, { backgroundColor: BRAND }]} />}
+              </TouchableOpacity>
+            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <TouchableOpacity onPress={() => router.push(`/user/${item.uid}` as any)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {ownerAv ? <Image source={{ uri: ownerAv }} style={s.userAv} /> : <View style={[s.userAv, { backgroundColor: BRAND }]} />}
+                <Text style={s.userTxt}>@{owner?.username || item.username}</Text>
+              </TouchableOpacity>
+              {item.uid !== uid && <TouchableOpacity onPress={toggleFollow} style={s.followPill}><Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{following ? 'Following' : 'Follow'}</Text></TouchableOpacity>}
+            </View>
+            {!!item.caption && <Text style={s.capTxt} numberOfLines={2}>{item.caption}</Text>}
+            <TouchableOpacity onPress={onComment} style={s.addCommentBar}><Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13 }}>Add comment...</Text></TouchableOpacity>
+          </View>
+
+          <View style={s.rightCol}>
+            <View style={s.actBtn}>
+              <TouchableOpacity onPress={() => toggleLike(false)} hitSlop={10}><Ionicons name={liked ? 'heart' : 'heart-outline'} size={30} color={liked ? NEON.pink : '#fff'} /></TouchableOpacity>
+              <TouchableOpacity onPress={onLikes} hitSlop={8}><Text style={s.actTxt}>Likes</Text></TouchableOpacity>
+            </View>
+            <TouchableOpacity onPress={onComment} style={s.actBtn} hitSlop={8}><Ionicons name="chatbubble-outline" size={28} color="#fff" /><Text style={s.actTxt}>{item.commentsCount || 0}</Text></TouchableOpacity>
+            <TouchableOpacity onPress={toggleRepost} style={s.actBtn} hitSlop={8}><Ionicons name="repeat" size={29} color={reposted ? BRAND : '#fff'} /><Text style={s.actTxt}>{repostCount}</Text></TouchableOpacity>
+            <TouchableOpacity onPress={toggleSave} style={s.actBtn} hitSlop={8}><Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={27} color={saved ? BRAND : '#fff'} /></TouchableOpacity>
+            <TouchableOpacity onPress={onShare} style={s.actBtn} hitSlop={8}><Ionicons name="paper-plane-outline" size={26} color="#fff" /></TouchableOpacity>
+            <TouchableOpacity onPress={() => setOptOpen(true)} style={s.actBtn} hitSlop={10}><Ionicons name="ellipsis-vertical" size={23} color="#fff" /></TouchableOpacity>
+          </View>
+        </>
+      )}
 
       <RepostThoughtModal visible={thoughtOpen} avatar={myAv} initialText={myThought} onSave={saveThought} onDelete={deleteRepost} onClose={() => setThoughtOpen(false)} />
+      <ReelOptionsSheet visible={optOpen} onClose={() => setOptOpen(false)} fullscreen={fullscreen} onToggleFullscreen={() => setFullscreen((f) => !f)} speed={speed} onChangeSpeed={(sp: number) => { setSpeed(sp); setSpeedLocked(sp !== 1); }} autoScroll={autoScroll} onToggleAutoScroll={() => {}} captions={captions} onToggleCaptions={() => setCaptions((c) => !c)} onInterest={(ok: boolean) => { if (!ok) onNextReel?.(); }} />
     </View>
   );
 }
@@ -114,6 +195,7 @@ function ReelItem({ item, active, focused, me, owner, onComment, onShare, onLike
 export default function ReelsScreen() {
   const { startId } = useLocalSearchParams<{ startId?: string }>();
   const uid = auth.currentUser?.uid || '';
+  const listRef = useRef<FlatList>(null);
   const [focused, setFocused] = useState(true);
   const [feedTab, setFeedTab] = useState<'forYou' | 'following'>('forYou');
   const [reels, setReels] = useState<any[]>([]);
@@ -144,6 +226,10 @@ export default function ReelsScreen() {
   }, [uid, startId]);
 
   const shownReels = feedTab === 'following' ? reels.filter((r) => Array.isArray(me?.following) && me.following.includes(r.uid)) : reels;
+  const goNext = (curId: string) => {
+    const idx = shownReels.findIndex((r) => r.id === curId);
+    if (idx >= 0 && idx + 1 < shownReels.length) listRef.current?.scrollToIndex({ index: idx + 1, animated: true });
+  };
   const showRepostToast = (rid: string) => { setToastReelId(rid); if (timerRef.current) clearTimeout(timerRef.current); timerRef.current = setTimeout(() => setToastReelId(null), 4000); };
   const undoRepost = async () => { if (!uid || !toastReelId) return; const r = toastReelId; setToastReelId(null); await updateDoc(doc(db, 'posts', r), { reposts: arrayRemove(uid), [`repostThoughts.${uid}`]: deleteField() }).catch(() => {}); };
   const onView = useRef(({ viewableItems }: any) => { if (viewableItems[0]?.item?.id) setActiveId(viewableItems[0].item.id); }).current;
@@ -152,13 +238,14 @@ export default function ReelsScreen() {
     <View style={{ flex: 1, backgroundColor: '#000' }}>
       <View style={s.topTabs}>
         {(['forYou', 'following'] as const).map((t) => (
-          <TouchableOpacity key={t} onPress={() => setFeedTab(t)} style={[s.topPill, feedTab === t && { backgroundColor: 'rgba(139,92,246,0.85)' }]}>
-            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>{t === 'forYou' ? 'For You' : 'Following'}</Text>
+          <TouchableOpacity key={t} onPress={() => setFeedTab(t)} style={{ paddingHorizontal: 10, paddingVertical: 4 }}>
+            <Text style={{ color: feedTab === t ? '#fff' : 'rgba(255,255,255,0.6)', fontWeight: '800', fontSize: 15 }}>{t === 'forYou' ? 'For You' : 'Following'}</Text>
+            {feedTab === t && <View style={{ height: 2, backgroundColor: BRAND, marginTop: 3, borderRadius: 1 }} />}
           </TouchableOpacity>
         ))}
       </View>
-      <FlatList data={shownReels} pagingEnabled windowSize={3} maxToRenderPerBatch={2} showsVerticalScrollIndicator={false} keyExtractor={(i) => i.id} onViewableItemsChanged={onView} viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
-        renderItem={({ item }) => <ReelItem item={item} active={item.id === activeId} focused={focused} me={me} owner={usersMap[item.uid]} onComment={() => setCommentPost(item)} onShare={() => setShareReel(item)} onLikes={() => setLikesPost(item)} onRepostToast={showRepostToast} />}
+      <FlatList ref={listRef} data={shownReels} pagingEnabled windowSize={3} maxToRenderPerBatch={2} showsVerticalScrollIndicator={false} keyExtractor={(i) => i.id} onViewableItemsChanged={onView} viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
+        renderItem={({ item }) => <ReelItem item={item} active={item.id === activeId} focused={focused} me={me} owner={usersMap[item.uid]} autoScroll={false} onNextReel={() => goNext(item.id)} onComment={() => setCommentPost(item)} onShare={() => setShareReel(item)} onLikes={() => setLikesPost(item)} onRepostToast={showRepostToast} />}
         ListEmptyComponent={<View style={s.empty}><Ionicons name="videocam-outline" size={48} color="#666" /><Text style={{ color: '#888', marginTop: 10 }}>No reels yet</Text></View>}
       />
       {!!toastReelId && (
@@ -175,23 +262,25 @@ export default function ReelsScreen() {
 }
 
 const s = StyleSheet.create({
-  topTabs: { position: 'absolute', top: 46, alignSelf: 'center', flexDirection: 'row', gap: 8, backgroundColor: 'rgba(0,0,0,0.45)', padding: 4, borderRadius: 20, zIndex: 40 },
-  topPill: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16 },
+  topTabs: { position: 'absolute', top: 46, alignSelf: 'center', flexDirection: 'row', gap: 14, zIndex: 40 },
   reel: { height: H, backgroundColor: '#000', justifyContent: 'flex-end' },
-  pauseIcon: { position: 'absolute', alignSelf: 'center', top: '45%', zIndex: 2 },
-  rightCol: { position: 'absolute', right: 12, bottom: 30, alignItems: 'center', gap: 14, zIndex: 30, elevation: 30 },
-  glossyPill: { width: 42, height: 42, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.45)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)', justifyContent: 'center', alignItems: 'center' },
+  edgeZone: { position: 'absolute', top: 90, bottom: 160, width: 52, zIndex: 10 },
+  centerIcon: { position: 'absolute', alignSelf: 'center', top: '44%', zIndex: 15 },
+  hintPill: { position: 'absolute', bottom: 150, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.72)', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, zIndex: 45 },
+  ccBox: { position: 'absolute', bottom: 180, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.75)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, maxWidth: '80%', zIndex: 25 },
+  rightCol: { position: 'absolute', right: 12, bottom: 26, alignItems: 'center', gap: 16, zIndex: 40, elevation: 40 },
   actBtn: { alignItems: 'center' },
-  actTxt: { color: '#fff', fontSize: 11, fontWeight: '700', marginTop: 3, textShadowColor: 'rgba(0,0,0,0.8)', textShadowRadius: 3 },
-  bottomInfo: { padding: 14, paddingRight: 76, backgroundColor: 'rgba(0,0,0,0.28)', zIndex: 30, elevation: 30 },
-  thoughtTrigger: { alignSelf: 'flex-start', alignItems: 'center', marginBottom: 10 },
+  actTxt: { color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 2, textShadowColor: 'rgba(0,0,0,0.8)', textShadowRadius: 3 },
+  bottomInfo: { padding: 14, paddingRight: 74, zIndex: 25, elevation: 25 },
+  thoughtTrigger: { alignSelf: 'flex-start', alignItems: 'center', marginBottom: 8 },
   thoughtPill: { backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, marginBottom: 4, maxWidth: 180 },
   thoughtMiniAv: { width: 34, height: 34, borderRadius: 17, borderWidth: 1.5, borderColor: '#fff' },
   userAv: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: '#fff' },
   userTxt: { color: '#fff', fontWeight: '800', fontSize: 15 },
   followPill: { borderWidth: 1, borderColor: '#fff', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 3 },
   capTxt: { color: '#fff', fontSize: 14, marginTop: 6 },
-  addCommentBar: { marginTop: 10, backgroundColor: 'rgba(0,0,0,0.45)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9 },
-  toast: { position: 'absolute', left: 12, right: 12, bottom: 12, backgroundColor: '#1E1B2E', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 50, elevation: 50 },
+  addCommentBar: { marginTop: 10, backgroundColor: 'rgba(255,255,255,0.14)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9 },
+  toast: { position: 'absolute', left: 12, right: 12, bottom: 12, backgroundColor: '#262626', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 50, elevation: 50 },
   empty: { height: H, justifyContent: 'center', alignItems: 'center' },
 });
+                
