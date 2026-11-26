@@ -61,10 +61,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  return (
-    <ThemeContext.Provider value={{ isDark, toggleTheme, c: isDark ? Colors.dark : Colors.light }}>
-      {children}
-    </ThemeContext.Provider>
+  return React.createElement(
+    ThemeContext.Provider,
+    { value: { isDark, toggleTheme, c: isDark ? Colors.dark : Colors.light } },
+    children
   );
 }
 
