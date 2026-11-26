@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Image, TouchableOpacity, FlatList, ScrollView, Dimensions, StyleSheet, Alert, RefreshControl } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Image, TouchableOpacity, Pressable, FlatList, Dimensions, StyleSheet, Alert, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { useRouter } from 'expo-router';
-import { collection, query, orderBy, limit, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, addDoc, serverTimestamp } from 'firebase/firestore';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { collection, query, orderBy, limit, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, addDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { FeedHeader, CommentModal } from '../constants/FeedHeader';
 import { ShareModal } from '../constants/ShareModal';
@@ -12,24 +12,42 @@ import { useTheme, BRAND } from '../constants/theme';
 import { sendPush } from '../constants/push';
 
 const W = Dimensions.get('window').width;
+
 const formatTime = (ts: any) => {
-  const d = ts?.toDate ? ts.toDate() : null;
-  if (!d) return 'Just now';
-  const m = Math.floor((Date.now() - d.getTime()) / 60000);
-  return m < 1 ? 'Just now' : m < 60 ? `${m}m ago` : m < 1440 ? `${Math.floor(m / 60)}h ago` : `${Math.floor(m / 1440)}d ago`;
+  const date = ts?.toDate ? ts.toDate() : null;
+  if (!date) return 'Just now';
+  const diff = Math.floor((Date.now() - date.getTime()) / 60000);
+  if (diff < 1) return 'Just now';
+  if (diff < 60) return `${diff}m ago`;
+  if (diff < 1440) return `${Math.floor(diff / 60)}h ago`;
+  return `${Math.floor(diff / 1440)}d ago`;
 };
 
-function PostVideo({ uri, onOpenReel }: { uri: string; onOpenReel: () => void }) {
-  const [muted, setMuted] = useState(true);
-  const player = useVideoPlayer(uri, (p) => { p.loop = true; p.muted = true; p.play(); });
-  const toggleMute = () => { const n = !muted; setMuted(n); player.muted = n; };
+function PostVideo({ uri, active, focused, onOpenReel }: { uri: string; active: boolean; focused: boolean; onOpenReel: () => void }) {
+  const [muted, setMuted] = useState(false);
+  const player = useVideoPlayer(uri, (p) => { p.loop = true; p.muted = false; });
+
+  useEffect(() => {
+    player.muted = muted;
+  }, [muted, player]);
+
+  useEffect(() => {
+    if (focused && active) {
+      player.muted = muted;
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [focused, active, muted, player]);
+
   return (
-    <TouchableOpacity activeOpacity={0.95} onPress={onOpenReel} style={styles.media}>
-      <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="cover" nativeControls={false} surfaceType="textureView" />
-      <TouchableOpacity onPress={toggleMute} style={styles.muteBtn} hitSlop={8}>
-        <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={17} color="#fff" />
+    <View style={s.mediaWrap}>
+      <VideoView player={player} style={s.media} surfaceType="textureView" nativeControls={false} contentFit="cover" />
+      <Pressable onPress={() => { player.pause(); onOpenReel(); }} style={[StyleSheet.absoluteFill, { zIndex: 1 }]} />
+      <TouchableOpacity onPress={() => setMuted((m) => !m)} style={s.volBtn} hitSlop={10}>
+        <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={18} color="#fff" />
       </TouchableOpacity>
-    </TouchableOpacity>
+    </View>
   );
 }
 
@@ -37,149 +55,178 @@ export default function HomeScreen() {
   const router = useRouter();
   const { c } = useTheme();
   const uid = auth.currentUser?.uid || '';
+  const [focused, setFocused] = useState(true);
   const [posts, setPosts] = useState<any[]>([]);
   const [stories, setStories] = useState<any[]>([]);
   const [userMap, setUserMap] = useState<Record<string, any>>({});
   const [me, setMe] = useState<any>(null);
-  const [limitCount, setLimitCount] = useState(12);
-  const [commentPostId, setCommentPostId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState('');
+  const [limitCount, setLimitCount] = useState(10);
+  const [commentPost, setCommentPost] = useState<any>(null);
   const [sharePost, setSharePost] = useState<any>(null);
-  const [storyOpen, setStoryOpen] = useState<any[]>([]);
+  const [storyList, setStoryList] = useState<any[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const lastTap = useRef<number>(0);
+  const lastTap = useRef(0);
+
+  useFocusEffect(useCallback(() => { setFocused(true); return () => setFocused(false); }, []));
 
   useEffect(() => {
-    const u1 = onSnapshot(query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(limitCount)), (s) => setPosts(s.docs.map((d) => ({ id: d.id, ...d.data() }))));
-    const u2 = onSnapshot(collection(db, 'users'), (s) => {
+    const u1 = onSnapshot(query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(limitCount)), (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setPosts(list);
+      if (list[0] && !activeId) setActiveId(list[0].id);
+    }, () => {});
+    const u2 = onSnapshot(collection(db, 'users'), (snap) => {
       const m: Record<string, any> = {};
-      s.docs.forEach((d) => { m[d.id] = d.data(); });
+      snap.docs.forEach((d) => { m[d.id] = { id: d.id, ...d.data() }; });
       setUserMap(m);
       if (uid && m[uid]) setMe(m[uid]);
-    });
-    const u3 = onSnapshot(collection(db, 'stories'), (s) => setStories(s.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    }, () => {});
+    const u3 = onSnapshot(query(collection(db, 'stories'), orderBy('createdAt', 'desc')), (snap) => {
+      const now = Date.now();
+      setStories(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((st: any) => !st.expiresAt || st.expiresAt > now));
+    }, () => {});
     return () => { u1(); u2(); u3(); };
   }, [uid, limitCount]);
 
   const toggleLike = async (post: any) => {
     if (!uid) return;
     const liked = Array.isArray(post.likes) && post.likes.includes(uid);
-    await updateDoc(doc(db, 'posts', post.id), { likes: liked ? arrayRemove(uid) : arrayUnion(uid) });
+    await updateDoc(doc(db, 'posts', post.id), { likes: liked ? arrayRemove(uid) : arrayUnion(uid) }).catch(() => {});
     if (!liked && post.uid !== uid) {
-      await addDoc(collection(db, 'notifications'), { toUid: post.uid, fromUid: uid, fromUsername: me?.username || 'user', type: 'like', message: 'liked your post.', read: false, createdAt: serverTimestamp() });
-      const token = userMap[post.uid]?.expoPushToken;
+      addDoc(collection(db, 'notifications'), {
+        toUid: post.uid, fromUid: uid, fromUsername: me?.username || 'user',
+        type: 'like', postId: post.id, message: 'liked your post.', read: false, createdAt: serverTimestamp(),
+      }).catch(() => {});
+      const token = userMap[post.uid]?.expoPushToken || userMap[post.uid]?.fcmToken;
       if (token) sendPush(token, 'Flevora', `@${me?.username || 'Someone'} liked your post.`);
     }
   };
 
-  const handleTap = (post: any) => { const now = Date.now(); if (now - lastTap.current < 300) toggleLike(post); lastTap.current = now; };
-  const toggleFollow = async (targetUid: string) => {
-    if (!uid || uid === targetUid) return;
-    const following = Array.isArray(me?.following) && me.following.includes(targetUid);
-    await updateDoc(doc(db, 'users', uid), { following: following ? arrayRemove(targetUid) : arrayUnion(targetUid) });
-    await updateDoc(doc(db, 'users', targetUid), { followers: following ? arrayRemove(uid) : arrayUnion(uid) });
+  const handleImageTap = (post: any) => {
+    const now = Date.now();
+    if (now - lastTap.current < 300) toggleLike(post);
+    lastTap.current = now;
   };
 
-  const openOptions = (postId: string) => Alert.alert('Post Options', 'Choose an action', [
-    { text: 'Not Interested / Hide', onPress: () => uid && updateDoc(doc(db, 'users', uid), { hiddenPosts: arrayUnion(postId) }) },
-    { text: 'Report Post', style: 'destructive', onPress: async () => { await addDoc(collection(db, 'reports'), { postId, type: 'post', status: 'pending', reportedBy: uid, createdAt: serverTimestamp() }); Alert.alert('Reported', 'Thank you.'); } },
-    { text: 'Cancel', style: 'cancel' },
-  ]);
+  const toggleMute = async (targetUid: string) => {
+    if (!uid || uid === targetUid) return;
+    const mutedList = Array.isArray(me?.mutedUsers) ? me.mutedUsers : [];
+    const isMuted = mutedList.includes(targetUid);
+    await updateDoc(doc(db, 'users', uid), { mutedUsers: isMuted ? arrayRemove(targetUid) : arrayUnion(targetUid) }).catch(() => {});
+  };
 
-  const blocked = new Set(me?.blockedUsers || []), hidden = new Set(me?.hiddenPosts || []), myFollowing = new Set(me?.following || []);
-  const visiblePosts = posts.filter((p) => {
-    if (blocked.has(p.uid) || hidden.has(p.id)) return false;
-    const owner = userMap[p.uid];
-    if (owner?.status === 'deactivated' || owner?.status === 'suspended') return false;
-    if (owner?.isPrivate && p.uid !== uid && !myFollowing.has(p.uid)) return false;
-    return true;
-  });
+  const onAvatarLongPress = (targetUid: string, userStories: any[]) => {
+    const isMuted = Array.isArray(me?.mutedUsers) && me.mutedUsers.includes(targetUid);
+    const btns: any[] = [];
+    if (userStories.length > 0) btns.push({ text: 'View Story', onPress: () => setStoryList(userStories) });
+    btns.push({ text: 'View Profile', onPress: () => router.push(`/user/${targetUid}` as any) });
+    if (targetUid !== uid) btns.push({ text: isMuted ? 'Unmute' : 'Mute', onPress: () => toggleMute(targetUid) });
+    btns.push({ text: 'Cancel', style: 'cancel' });
+    Alert.alert('Account Options', undefined, btns);
+  };
+
+  const openPostOptions = (post: any) => {
+    const btns: any[] = [
+      { text: 'Report Post', style: 'destructive', onPress: () => addDoc(collection(db, 'reports'), { postId: post.id, type: 'post', status: 'pending', reportedBy: uid, createdAt: serverTimestamp() }) },
+    ];
+    if (post.uid === uid) btns.unshift({ text: 'Delete Post', style: 'destructive', onPress: () => deleteDoc(doc(db, 'posts', post.id)) });
+    btns.push({ text: 'Cancel', style: 'cancel' });
+    Alert.alert('Post Options', undefined, btns);
+  };
+
+  const onView = useRef(({ viewableItems }: any) => {
+    if (viewableItems[0]?.item?.id) setActiveId(viewableItems[0].item.id);
+  }).current;
 
   return (
-    <View style={[styles.container, { backgroundColor: c.background }]}>
+    <View style={{ flex: 1, backgroundColor: c.background }}>
       <FlatList
-        data={visiblePosts} keyExtractor={(i) => i.id}
+        data={posts}
+        keyExtractor={(i) => i.id}
         ListHeaderComponent={<FeedHeader />}
-        ListEmptyComponent={<Text style={{ textAlign: 'center', marginTop: 40, color: c.muted }}>No posts yet.</Text>}
-        onEndReached={() => setLimitCount((n) => n + 10)} onEndReachedThreshold={0.4}
+        onViewableItemsChanged={onView}
+        viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
+        onEndReached={() => setLimitCount((n) => n + 10)}
+        onEndReachedThreshold={0.4}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); setTimeout(() => setRefreshing(false), 600); }} />}
         renderItem={({ item }) => {
+          const owner = userMap[item.uid];
+          const dp = owner?.photoUrl || owner?.avatar || item.avatar || '';
+          const uname = owner?.username || item.username || 'user';
+          const userStories = stories.filter((st) => st.uid === item.uid);
+          const hasStory = userStories.length > 0;
           const liked = Array.isArray(item.likes) && item.likes.includes(uid);
           const saved = Array.isArray(me?.savedPosts) && me.savedPosts.includes(item.id);
-          const isFollowing = myFollowing.has(item.uid);
-          const imgs: string[] = item.media?.length ? item.media : [item.mediaUrl];
-          const firstTag = Array.isArray(item.hashtags) && item.hashtags[0];
-          const owner = userMap[item.uid];
-          const av = owner?.photoUrl || owner?.avatar || item.userPhoto || item.userAvatar;
-          const uStories = stories.filter((st) => st.uid === item.uid);
-          const hasStory = uStories.length > 0;
-          const isMuted = (me?.mutedUsers || []).includes(item.uid);
-          const openProf = () => router.push((item.uid === uid ? '/profile' : `/user/${item.uid}`) as any);
-          const toggleMuteUser = () => uid && updateDoc(doc(db, 'users', uid), { mutedUsers: isMuted ? arrayRemove(item.uid) : arrayUnion(item.uid) });
-          const onAvLong = () => Alert.alert(`@${owner?.username || item.username}`, 'Choose an option', [
-            ...(hasStory ? [{ text: 'View Story', onPress: () => setStoryOpen(uStories) }] : []),
-            { text: 'View Profile', onPress: openProf },
-            { text: isMuted ? 'Unmute' : 'Mute', onPress: toggleMuteUser },
-            { text: 'Cancel', style: 'cancel' as const },
-          ]);
 
           return (
-            <View style={[styles.card, { borderBottomColor: c.border }]}>
-              <View style={styles.head}>
-                <View style={styles.userRow}>
-                  <TouchableOpacity onPress={() => (hasStory ? setStoryOpen(uStories) : openProf())} onLongPress={onAvLong} style={[styles.ring, hasStory && { borderColor: BRAND, borderWidth: 2 }]}>
-                    {av ? <Image source={{ uri: av }} style={styles.avatar} /> : <View style={[styles.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Text style={{ color: '#fff', fontWeight: '700' }}>{(owner?.username || item.username || 'U')[0].toUpperCase()}</Text></View>}
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={openProf}>
-                    <Text style={{ color: c.text, fontWeight: '700' }}>@{owner?.username || item.username}</Text>
-                    {!!item.location && <Text style={{ color: c.muted, fontSize: 11 }}>{item.location}</Text>}
-                  </TouchableOpacity>
-                </View>
+            <View style={[s.card, { borderBottomColor: c.border }]}>
+              <View style={s.rowHead}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  {item.uid !== uid && <TouchableOpacity onPress={() => toggleFollow(item.uid)}><Text style={{ color: isFollowing ? c.muted : BRAND, fontWeight: '700', fontSize: 13 }}>{isFollowing ? 'Following' : 'Follow'}</Text></TouchableOpacity>}
-                  <TouchableOpacity onPress={() => openOptions(item.id)}><Ionicons name="ellipsis-vertical" size={18} color={c.muted} /></TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => (hasStory ? setStoryList(userStories) : router.push(`/user/${item.uid}` as any))}
+                    onLongPress={() => onAvatarLongPress(item.uid, userStories)}
+                    style={[s.avRing, { borderColor: hasStory ? BRAND : 'transparent' }]}
+                  >
+                    {dp ? <Image source={{ uri: dp }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={18} color="#fff" /></View>}
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => router.push(`/user/${item.uid}` as any)}>
+                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 14 }}>@{uname}</Text>
+                  </TouchableOpacity>
                 </View>
+                <TouchableOpacity onPress={() => openPostOptions(item)} hitSlop={8}>
+                  <Ionicons name="ellipsis-vertical" size={18} color={c.muted} />
+                </TouchableOpacity>
               </View>
 
               {item.mediaType === 'video' ? (
-                <PostVideo uri={item.mediaUrl} onOpenReel={() => router.push({ pathname: '/reels', params: { startId: item.id } } as any)} />
+                <PostVideo uri={item.mediaUrl} active={item.id === activeId} focused={focused} onOpenReel={() => router.push(`/reels?startId=${item.id}` as any)} />
               ) : (
-                <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
-                  {imgs.map((url, idx) => <TouchableOpacity key={idx} activeOpacity={0.95} onPress={() => handleTap(item)}><Image source={{ uri: url }} style={styles.media} /></TouchableOpacity>)}
-                </ScrollView>
+                <TouchableOpacity activeOpacity={0.95} onPress={() => handleImageTap(item)}>
+                  <Image source={{ uri: item.mediaUrl }} style={s.media} resizeMode="cover" />
+                </TouchableOpacity>
               )}
 
-              <View style={styles.actions}>
+              <View style={s.actions}>
                 <View style={{ flexDirection: 'row', gap: 16 }}>
-                  <TouchableOpacity onPress={() => toggleLike(item)}><Ionicons name={liked ? 'heart' : 'heart-outline'} size={25} color={liked ? '#EF4444' : c.text} /></TouchableOpacity>
-                  <TouchableOpacity onPress={() => setCommentPostId(item.id)}><Ionicons name="chatbubble-outline" size={23} color={c.text} /></TouchableOpacity>
-                  <TouchableOpacity onPress={() => setSharePost(item)}><Ionicons name="paper-plane-outline" size={23} color={c.text} /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => toggleLike(item)}>
+                    <Ionicons name={liked ? 'heart' : 'heart-outline'} size={25} color={liked ? '#EF4444' : c.text} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setCommentPost(item)}>
+                    <Ionicons name="chatbubble-outline" size={23} color={c.text} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setSharePost(item)}>
+                    <Ionicons name="paper-plane-outline" size={23} color={c.text} />
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity onPress={() => uid && updateDoc(doc(db, 'users', uid), { savedPosts: saved ? arrayRemove(item.id) : arrayUnion(item.id) })}><Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={23} color={saved ? BRAND : c.text} /></TouchableOpacity>
+                <TouchableOpacity onPress={() => uid && updateDoc(doc(db, 'users', uid), { savedPosts: saved ? arrayRemove(item.id) : arrayUnion(item.id) })}>
+                  <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={23} color={saved ? BRAND : c.text} />
+                </TouchableOpacity>
               </View>
 
               <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
                 <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>{item.likes?.length || 0} likes</Text>
-                {!!item.caption && <Text style={{ color: c.text, marginTop: 3 }}><Text onPress={openProf} style={{ fontWeight: '700' }}>@{owner?.username || item.username} </Text>{item.caption}</Text>}
-                {!!firstTag && <TouchableOpacity onPress={() => router.navigate({ pathname: '/explore' as any, params: { q: firstTag } })}><Text style={{ color: BRAND, fontSize: 12, marginTop: 3, fontWeight: '600' }}>{item.hashtags.join(' ')}</Text></TouchableOpacity>}
+                {!!item.caption && <Text style={{ color: c.text, marginTop: 3 }}><Text style={{ fontWeight: '700' }}>@{uname} </Text>{item.caption}</Text>}
                 <Text style={{ color: c.muted, fontSize: 11, marginTop: 4 }}>{formatTime(item.createdAt)}</Text>
               </View>
             </View>
           );
         }}
       />
-      <CommentModal postId={commentPostId} onClose={() => setCommentPostId(null)} />
+      <CommentModal postId={commentPost?.id || null} post={commentPost} onClose={() => setCommentPost(null)} />
       <ShareModal post={sharePost} onClose={() => setSharePost(null)} />
-      {storyOpen.length > 0 && <StoryViewerModal {...({ visible: true, stories: storyOpen, initialIndex: 0, myUid: uid, me, c, onClose: () => setStoryOpen([]) } as any)} />}
+      <StoryViewerModal visible={!!storyList} stories={storyList || []} onClose={() => setStoryList(null)} onAddStory={() => {}} />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1 }, card: { borderBottomWidth: 1, marginBottom: 6 },
-  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  ring: { padding: 2, borderRadius: 22 }, avatar: { width: 36, height: 36, borderRadius: 18 },
+const s = StyleSheet.create({
+  card: { borderBottomWidth: 0.5 },
+  rowHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10 },
+  avRing: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, justifyContent: 'center', alignItems: 'center', padding: 2 },
+  av: { width: 32, height: 32, borderRadius: 16 },
+  mediaWrap: { width: W, height: W * 1.15, backgroundColor: '#000' },
   media: { width: W, height: W * 1.15, backgroundColor: '#000' },
-  muteBtn: { position: 'absolute', right: 12, bottom: 12, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
-  actions: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 10 },
+  volBtn: { position: 'absolute', right: 12, bottom: 12, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', zIndex: 20, elevation: 20 },
+  actions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
 });
