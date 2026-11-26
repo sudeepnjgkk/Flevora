@@ -4,9 +4,9 @@
     "slug": "flevora-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/1000197996-rounded-433-433-433-433px.png",
     "scheme": "flevora",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
@@ -15,15 +15,15 @@
       "package": "com.sudeep098.flevoraapp",
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundColor": "#FFFFFF"
+        "foregroundImage": "./assets/images/1000197996-rounded-433-433-433-433px.png",
+        "backgroundColor": "#090612"
       },
       "edgeToEdgeEnabled": true
     },
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/1000197996-rounded-433-433-433-433px.png"
     },
     "plugins": [
       "expo-router",
@@ -31,10 +31,10 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/1000197996-rounded-433-433-433-433px.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#FFFFFF"
+          "backgroundColor": "#090612"
         }
       ]
     ],
