@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -15,75 +15,120 @@ export function FeedHeader() {
   const router = useRouter();
   const { c } = useTheme();
   const uid = auth.currentUser?.uid || '';
-  const [me, setMe] = useState<any>({});
+  const [me, setMe] = useState<any>(null);
+  const [usersMap, setUsersMap] = useState<Record<string, any>>({});
   const [stories, setStories] = useState<any[]>([]);
+  const [viewStories, setViewStories] = useState<any[] | null>(null);
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
-  const [showNotif, setShowNotif] = useState(false);
-  const [viewIdx, setViewIdx] = useState<number | null>(null);
 
   useEffect(() => {
-    const u1 = onSnapshot(query(collection(db, 'stories'), orderBy('createdAt', 'desc')), (s) => {
-      setStories(s.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
-    const u2 = uid ? onSnapshot(doc(db, 'users', uid), (s) => s.exists() && setMe(s.data())) : () => {};
-    const u3 = uid ? onSnapshot(query(collection(db, 'notifications'), where('toUid', '==', uid), where('read', '==', false)), (s) => setHasUnread(!s.empty), () => {}) : () => {};
-    return () => { u1(); u2(); u3(); };
+    const u1 = onSnapshot(query(collection(db, 'stories'), orderBy('createdAt', 'desc')), (snap) => {
+      const now = Date.now();
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((st: any) => {
+        if (st.expiresAt && st.expiresAt <= now) return false;
+        if (st.closeFriendsOnly) return st.uid === uid || (Array.isArray(st.allowedUids) && st.allowedUids.includes(uid));
+        return true;
+      });
+      setStories(list);
+    }, () => {});
+    const u2 = onSnapshot(collection(db, 'users'), (snap) => {
+      const m: Record<string, any> = {};
+      snap.docs.forEach((d) => { m[d.id] = { id: d.id, ...d.data() }; });
+      setUsersMap(m);
+      if (uid && m[uid]) setMe(m[uid]);
+    }, () => {});
+    if (!uid) return () => { u1(); u2(); };
+    const u3 = onSnapshot(query(collection(db, 'notifications'), where('toUid', '==', uid), where('read', '==', false)), (sn) => {
+      setHasUnread(!sn.empty);
+    }, () => {});
+    const u4 = onSnapshot(doc(db, 'users', uid), (d) => { if (d.exists()) setMe({ id: d.id, ...d.data() }); }, () => {});
+    return () => { u1(); u2(); u3(); u4(); };
   }, [uid]);
 
-  const myStoryIdx = stories.findIndex((st) => st.uid === uid);
-  const otherStories = stories.filter((st) => st.uid !== uid);
-  const av = me?.photoUrl || me?.avatar;
+  const { myStories, otherGroups } = useMemo(() => {
+    const mine = stories.filter((st) => st.uid === uid);
+    const map: Record<string, any[]> = {};
+    stories.filter((st) => st.uid !== uid).forEach((st) => {
+      if (!map[st.uid]) map[st.uid] = [];
+      map[st.uid].push(st);
+    });
+    return { myStories: mine, otherGroups: Object.values(map) };
+  }, [stories, uid]);
+
+  const myDp = me?.photoUrl || me?.avatar || '';
+  const hasMyStory = myStories.length > 0;
+  const myRingColor = hasMyStory ? (myStories[0]?.closeFriendsOnly ? '#10B981' : BRAND) : 'transparent';
 
   return (
-    <View style={{ backgroundColor: c.background }}>
-      <View style={s.top}>
-        <TouchableOpacity onPress={() => router.push('/upload')} hitSlop={12}><Ionicons name="add" size={28} color={c.text} /></TouchableOpacity>
-        <Text style={[s.logo, { color: c.text }]}>Flevora</Text>
-        <TouchableOpacity onPress={() => setShowNotif(true)} hitSlop={12} style={{ position: 'relative' }}>
-          <Ionicons name="heart-outline" size={26} color={c.text} />
-          {hasUnread && <View style={s.dot} />}
+    <View>
+      <View style={[s.topBar, { backgroundColor: c.background, borderBottomColor: c.border }]}>
+        <TouchableOpacity onPress={() => router.push('/upload' as any)} hitSlop={8}>
+          <Ionicons name="add" size={28} color={c.text} />
         </TouchableOpacity>
+        <Text style={s.logo}>Flevora</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+          <TouchableOpacity onPress={() => setNotifOpen(true)} hitSlop={8}>
+            <Ionicons name="heart-outline" size={24} color={c.text} />
+            {hasUnread && <View style={s.dot} />}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.navigate('/messages' as any)} hitSlop={8}>
+            <Ionicons name="chatbubble-ellipses-outline" size={24} color={c.text} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-        <TouchableOpacity style={s.item} onPress={() => (myStoryIdx >= 0 ? setViewIdx(myStoryIdx) : setShowCreate(true))}>
-          <View style={[s.ring, myStoryIdx >= 0 && { borderColor: BRAND, borderWidth: 2.5 }]}>
-            {av ? <Image source={{ uri: av }} style={s.av} /> : <View style={[s.av, s.ph]}><Ionicons name="person" size={26} color="#fff" /></View>}
-            <TouchableOpacity style={s.plus} onPress={() => setShowCreate(true)}><Ionicons name="add" size={14} color="#fff" /></TouchableOpacity>
-          </View>
-          <Text style={[s.lbl, { color: c.muted }]}>Your story</Text>
-        </TouchableOpacity>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[s.storyBar, { borderBottomColor: c.border }]}>
+        <View style={s.storyItem}>
+          <TouchableOpacity activeOpacity={0.85} onPress={() => (hasMyStory ? setViewStories(myStories) : setCreatorOpen(true))}>
+            <View style={[s.ring, { borderColor: myRingColor }]}>
+              {myDp ? (
+                <Image source={{ uri: myDp }} style={s.avatar} />
+              ) : (
+                <View style={[s.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
+                  <Ionicons name="person" size={28} color="#fff" />
+                </View>
+              )}
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.plusBadge, { borderColor: c.background }]} onPress={() => setCreatorOpen(true)} hitSlop={6}>
+            <Ionicons name="add" size={14} color="#fff" />
+          </TouchableOpacity>
+          <Text style={[s.storyName, { color: c.text }]} numberOfLines={1}>Your story</Text>
+        </View>
 
-        {otherStories.map((st) => {
-          const idx = stories.findIndex((x) => x.id === st.id);
+        {otherGroups.map((grp) => {
+          const first = grp[0];
+          const u = usersMap[first.uid];
+          const dp = u?.photoUrl || u?.avatar || first.mediaUrl;
           return (
-            <TouchableOpacity key={st.id} style={s.item} onPress={() => setViewIdx(idx)}>
-              <View style={[s.ring, { borderColor: BRAND, borderWidth: 2.5 }]}>
-                {st.userPhoto ? <Image source={{ uri: st.userPhoto }} style={s.av} /> : <View style={[s.av, s.ph]}><Ionicons name="person" size={26} color="#fff" /></View>}
+            <TouchableOpacity key={first.uid} style={s.storyItem} onPress={() => setViewStories(grp)}>
+              <View style={[s.ring, { borderColor: first.closeFriendsOnly ? '#10B981' : BRAND }]}>
+                <Image source={{ uri: dp }} style={s.avatar} />
               </View>
-              <Text style={[s.lbl, { color: c.text }]} numberOfLines={1}>{st.username || 'User'}</Text>
+              <Text style={[s.storyName, { color: c.text }]} numberOfLines={1}>{u?.username || first.username}</Text>
             </TouchableOpacity>
           );
         })}
       </ScrollView>
 
-      <StoryCreatorModal visible={showCreate} onClose={() => setShowCreate(false)} uid={uid} user={me} me={me} />
-      <NotificationModal visible={showNotif} onClose={() => setShowNotif(false)} c={c} />
-      {viewIdx !== null && <StoryViewerModal {...({ visible: true, stories, initialIndex: viewIdx, myUid: uid, me, c, onClose: () => setViewIdx(null) } as any)} />}
+      <StoryCreatorModal visible={creatorOpen} onClose={() => setCreatorOpen(false)} />
+      <StoryViewerModal visible={!!viewStories} stories={viewStories || []} onClose={() => setViewStories(null)} onAddStory={() => { setViewStories(null); setCreatorOpen(true); }} />
+      <NotificationModal visible={notifOpen} onClose={() => setNotifOpen(false)} />
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 46, paddingBottom: 8, paddingHorizontal: 16 },
-  logo: { fontSize: 22, fontWeight: '800', letterSpacing: 0.3 },
-  dot: { position: 'absolute', top: 0, right: 0, width: 9, height: 9, borderRadius: 5, backgroundColor: '#EF4444' },
-  row: { paddingHorizontal: 12, paddingVertical: 8, gap: 14 },
-  item: { alignItems: 'center', width: 72 },
-  ring: { width: 68, height: 68, borderRadius: 34, alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  av: { width: 60, height: 60, borderRadius: 30 },
-  ph: { backgroundColor: BRAND, alignItems: 'center', justifyContent: 'center' },
-  plus: { position: 'absolute', right: 0, bottom: 0, width: 22, height: 22, borderRadius: 11, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
-  lbl: { fontSize: 11, marginTop: 4 },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingTop: 48, paddingBottom: 10, borderBottomWidth: 1 },
+  logo: { fontSize: 25, fontWeight: '800', color: BRAND },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444', position: 'absolute', top: 0, right: 0 },
+  storyBar: { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1 },
+  storyItem: { alignItems: 'center', marginRight: 14, width: 70 },
+  ring: { width: 68, height: 68, borderRadius: 34, borderWidth: 2.5, justifyContent: 'center', alignItems: 'center', padding: 2 },
+  avatar: { width: 60, height: 60, borderRadius: 30 },
+  plusBadge: { position: 'absolute', right: 2, bottom: 18, width: 22, height: 22, borderRadius: 11, backgroundColor: '#111', borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
+  storyName: { fontSize: 11, marginTop: 4 },
 });
+    
