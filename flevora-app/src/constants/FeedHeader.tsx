@@ -1,12 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, Modal, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import { collection, query, where, orderBy, onSnapshot, doc } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND, NEON } from './theme';
 import { FlevoraLogo } from './FlevoraLogo';
-import { GlossyIcon } from './GlossyIcon';
 import { StoryCreatorModal } from './StoryCreatorModal';
 import { StoryViewerModal } from './StoryViewerModal';
 import { NotificationModal } from './NotificationModal';
@@ -15,7 +13,6 @@ import UploadScreen from '../app/upload';
 export { CommentModal } from './CommentModal';
 
 export function FeedHeader() {
-  const router = useRouter();
   const { c } = useTheme();
   const uid = auth.currentUser?.uid || '';
   const [me, setMe] = useState<any>(null);
@@ -66,21 +63,24 @@ export function FeedHeader() {
   return (
     <View style={{ backgroundColor: c.background }}>
       <View style={[s.topBar, { borderBottomColor: c.border }]}>
-        <FlevoraLogo size={32} showText />
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <TouchableOpacity onPress={() => setUploadOpen(true)}><GlossyIcon name="add" size={20} boxSize={36} accent={NEON.purple} /></TouchableOpacity>
-          <TouchableOpacity onPress={() => setNotifOpen(true)}>
-            <GlossyIcon name="heart" size={18} boxSize={36} accent={NEON.pink} />
-            {hasUnread && <View style={s.dot} />}
+        <FlevoraLogo size={34} showText />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+          <TouchableOpacity onPress={() => setUploadOpen(true)} hitSlop={8}>
+            <Ionicons name="add-circle-outline" size={28} color={c.text} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.navigate('/messages' as any)}><GlossyIcon name="paper-plane" size={18} boxSize={36} accent={NEON.orange} /></TouchableOpacity>
+          <TouchableOpacity onPress={() => setNotifOpen(true)} hitSlop={8}>
+            <Ionicons name={hasUnread ? 'heart' : 'heart-outline'} size={26} color={hasUnread ? NEON.pink : c.text} />
+            {hasUnread && <View style={[s.dot, { borderColor: c.background }]} />}
+          </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[s.storyBar, { borderBottomColor: c.border }]}>
         <View style={s.storyItem}>
           <TouchableOpacity activeOpacity={0.85} onPress={() => (hasMyStory ? setViewStories(myStories) : setCreatorOpen(true))}>
-            <View style={[s.ring, { borderColor: myRingColor }]}>
+            <View style={[s.ring, { borderColor: myRingColor
+
+ }]}>
               {myDp ? <Image source={{ uri: myDp }} style={s.avatar} /> : <View style={[s.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={26} color="#fff" /></View>}
             </View>
           </TouchableOpacity>
@@ -117,7 +117,7 @@ export function FeedHeader() {
 
 const s = StyleSheet.create({
   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingTop: 48, paddingBottom: 10, borderBottomWidth: 0.5 },
-  dot: { width: 9, height: 9, borderRadius: 4.5, backgroundColor: '#EF4444', position: 'absolute', top: -1, right: -1, borderWidth: 1.5, borderColor: '#fff' },
+  dot: { width: 9, height: 9, borderRadius: 4.5, backgroundColor: '#EF4444', position: 'absolute', top: 0, right: -1, borderWidth: 1.5 },
   storyBar: { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 0.5 },
   storyItem: { alignItems: 'center', marginRight: 14, width: 70 },
   ring: { width: 68, height: 68, borderRadius: 34, borderWidth: 2.5, justifyContent: 'center', alignItems: 'center', padding: 2 },
