@@ -32,7 +32,7 @@ export default function ProfileScreen() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [drafts, setDrafts] = useState<any[]>([]);
   const [tab, setTab] = useState<'posts' | 'reels' | 'reposts' | 'collab'>('posts');
-  const [uploadMode, setUploadMode] = useState<'POST' | 'REEL' | null>(null);
+  const [uploadMode, setUploadMode] = useState<'POST' | 'REEL' | 'STORY' | 'LIVE' | null>(null);
   const [m, setM] = useState({ create: false, acc: false, edit: false, qr: false, dash: false, drafts: false, story: false, settings: false, follow: '' as '' | 'followers' | 'following' });
 
   useEffect(() => {
@@ -157,12 +157,7 @@ export default function ProfileScreen() {
         )}
       />
 
-      <CreateMenuModal visible={m.create} onClose={() => setM({ ...m, create: false })} c={c} onSelect={(k: string) => {
-        if (k === 'story') setM({ ...m, create: false, story: true });
-        else if (k === 'reel' || k === 'edits') setUploadMode('REEL');
-        else if (k === 'post') setUploadMode('POST');
-        else Alert.alert(k.toUpperCase(), k === 'live' ? 'Live streaming Spark free tier par available nahi hai.' : 'Coming soon!');
-      }} />
+      <CreateMenuModal visible={m.create} onClose={() => setM({ ...m, create: false })} c={c} onSelect={(k: string) => setUploadMode(k.toUpperCase() as any)} />
       <Modal visible={!!uploadMode} animationType="slide" onRequestClose={() => setUploadMode(null)}><UploadScreen initialMode={uploadMode || 'POST'} onClose={() => setUploadMode(null)} /></Modal>
       <AccountSwitcherModal visible={m.acc} onClose={() => setM({ ...m, acc: false })} accounts={accounts} currentUid={uid} onAddAccount={() => signOut(auth)} c={c} />
       <EditProfileModal visible={m.edit} onClose={() => setM({ ...m, edit: false })} uid={uid} user={user} onPickAvatar={pickAvatar} c={c} />
