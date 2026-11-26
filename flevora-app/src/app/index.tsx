@@ -12,7 +12,7 @@ import { useTheme, BRAND } from '../constants/theme';
 import { sendPush } from '../constants/push';
 
 const W = Dimensions.get('window').width;
-const fmtTime = (ts: any) => {
+const formatTime = (ts: any) => {
   const d = ts?.toDate ? ts.toDate() : null;
   if (!d) return 'Just now';
   const m = Math.floor((Date.now() - d.getTime()) / 60000);
