@@ -1,161 +1,180 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Image, ScrollView, Switch, StyleSheet, Alert } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, Image, ScrollView, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
-import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { Ionicons } from '@expo/vector-icons';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND } from '../constants/theme';
-import { SaveDraftModal, MoreOptionsModal } from '../constants/UploadOptionsModal';
 
-const FILTERS = ['Normal', 'Vivid', 'B&W', 'Vintage', 'Warm', 'Cool', 'Dramatic'];
-const F_MAP: Record<string, string> = { Vivid: 'e_vibrance:60', 'B&W': 'e_grayscale', Vintage: 'e_sepia:60', Warm: 'e_tint:40:orange', Cool: 'e_tint:40:blue', Dramatic: 'e_contrast:50' };
+const CLOUD_NAME = 'faqfo0lu';
+const UPLOAD_PRESET = 'flevora_upload';
+const MODES = ['POST', 'STORY', 'REEL', 'LIVE'] as const;
+const FILTERS = ['Normal', 'Warm', 'Cool', 'Vivid', 'B&W', 'Fade', 'Dramatic'];
 
-export default function UploadScreen() {
+export default function UploadScreen({ initialMode, onClose }: { initialMode?: 'POST' | 'STORY' | 'REEL' | 'LIVE'; onClose?: () => void }) {
   const router = useRouter();
+  const { mode: paramMode } = useLocalSearchParams<{ mode?: string }>();
   const { c } = useTheme();
-  const uid = auth.currentUser?.uid || '';
-  const [mode, setMode] = useState<'POST' | 'STORY' | 'REEL' | 'LIVE'>('REEL');
-  const [step, setStep] = useState<'studio' | 'details'>('studio');
-  const [media, setMedia] = useState<{ uri: string; type: 'image' | 'video' } | null>(null);
+  const [mode, setMode] = useState<'POST' | 'STORY' | 'REEL' | 'LIVE'>(initialMode || (paramMode as any) || 'POST');
+  const [asset, setAsset] = useState<{ uri: string; type: 'image' | 'video' } | null>(null);
   const [filter, setFilter] = useState('Normal');
   const [caption, setCaption] = useState('');
-  const [audio, setAudio] = useState('Original Audio');
-  const [tags, setTags] = useState('');
-  const [loc, setLoc] = useState('');
-  const [link, setLink] = useState('');
-  const [aiLabel, setAiLabel] = useState(false);
-  const [audience, setAudience] = useState<'Everyone' | 'Close Friends'>('Everyone');
-  const [opts, setOpts] = useState<any>({ hq: true, toStory: false, noComments: false, hideLikes: false, hideShares: false, noTemplate: false, allowDl: true, altText: '' });
-  const [showDraftAsk, setShowDraftAsk] = useState(false);
-  const [showMore, setShowMore] = useState(false);
-  const [pct, setPct] = useState(0);
-  const [busy, setBusy] = useState(false);
+  const [location, setLocation] = useState('');
+  const [cfOnly, setCfOnly] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
-  const pick = async (cam: boolean) => {
-    const mTypes = mode === 'REEL' ? ['videos'] : ['images', 'videos'];
-    const res = cam ? await ImagePicker.launchCameraAsync({ mediaTypes: mTypes as any, quality: 0.8 }) : await ImagePicker.launchImageLibraryAsync({ mediaTypes: mTypes as any, quality: 0.8 });
-    if (!res.canceled && res.assets[0]) setMedia({ uri: res.assets[0].uri, type: res.assets[0].type === 'video' ? 'video' : 'image' });
+  useEffect(() => {
+    if (initialMode) setMode(initialMode);
+  }, [initialMode]);
+
+  const closeAll = () => (onClose ? onClose() : router.back());
+
+  const handleClose = () => {
+    if (!asset && !caption.trim()) return closeAll();
+    Alert.alert('Discard changes?', undefined, [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Start over', onPress: () => { setAsset(null); setCaption(''); setLocation(''); } },
+      { text: 'Discard', style: 'destructive', onPress: closeAll },
+    ]);
   };
 
-  const saveDraft = async () => {
-    if (!media) return;
-    const raw = await AsyncStorage.getItem('flevora_drafts');
-    const list = raw ? JSON.parse(raw) : [];
-    list.unshift({ id: `dr_${Date.now()}`, uri: media.uri, mediaType: media.type, title: caption.trim() || `${mode} Draft`, caption, filter, date: new Date().toLocaleDateString() });
-    await AsyncStorage.setItem('flevora_drafts', JSON.stringify(list.slice(0, 20)));
-    setShowDraftAsk(false); setMedia(null); setStep('studio');
-    Alert.alert('Saved', 'Draft saved! Profile -> Reels -> Drafts me milega.');
-    router.back();
+  const pickGallery = async () => {
+    const mediaTypes: any = mode === 'REEL' ? ['videos'] : ['images', 'videos'];
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes, quality: 0.75 });
+    if (!res.canceled && res.assets[0]) {
+      const a = res.assets[0];
+      setAsset({ uri: a.uri, type: a.type === 'video' ? 'video' : 'image' });
+    }
   };
 
-  const uploadAndShare = () => {
-    if (!media || !uid || busy) return;
-    setBusy(true); setPct(1);
-    const data = new FormData();
-    data.append('file', { uri: media.uri, type: media.type === 'video' ? 'video/mp4' : 'image/jpeg', name: `up_${Date.now()}.${media.type === 'video' ? 'mp4' : 'jpg'}` } as any);
-    data.append('upload_preset', 'flevora_upload');
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `https://api.cloudinary.com/v1_1/faqfo0lu/${media.type}/upload`);
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable) setPct(Math.min(100, Math.round((e.loaded / e.total) * 100))); };
-    xhr.onload = async () => {
-      try {
-        const j = JSON.parse(xhr.responseText);
-        if (!j.secure_url) throw new Error('Upload failed');
-        let url = j.secure_url;
-        if (F_MAP[filter] && media.type === 'image') url = url.replace('/upload/', `/upload/${F_MAP[filter]}/`);
-        const uSnap = await getDoc(doc(db, 'users', uid));
-        const u = uSnap.exists() ? uSnap.data() : {};
-        const tagged = tags.split(',').map((t) => t.trim().replace('@', '').toLowerCase()).filter(Boolean);
-        if (mode === 'STORY' || opts.toStory) {
-          await addDoc(collection(db, 'stories'), { uid, username: u.username || 'user', userPhoto: u.photoUrl || '', mediaUrl: url, mediaType: media.type, audience, viewers: [], likes: [], comments: [], createdAt: serverTimestamp() });
-        }
-        if (mode !== 'STORY') {
-          await addDoc(collection(db, 'posts'), {
-            uid, username: u.username || 'user', userPhoto: u.photoUrl || '', mediaUrl: url, mediaType: media.type, caption: caption.trim(),
-            audioName: audio.trim() || 'Original Audio', location: loc.trim(), link: link.trim(), taggedUsers: tagged, aiLabel, audience,
-            commentsDisabled: opts.noComments, hideLikes: opts.hideLikes, hideShares: opts.hideShares, allowDownload: opts.allowDl, altText: opts.altText,
-            likes: [], savedBy: [], reposts: [], views: 0, commentsCount: 0, createdAt: serverTimestamp(),
-          });
-        }
-        setMedia(null); setCaption(''); setStep('studio'); setBusy(false); setPct(0);
-        router.replace('/');
-      } catch { setBusy(false); Alert.alert('Error', 'Upload failed. Try again.'); }
-    };
-    xhr.send(data);
+  const openCamera = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) return Alert.alert('Permission Needed', 'Please allow camera access.');
+    const res = await ImagePicker.launchCameraAsync({ mediaTypes: mode === 'REEL' ? ['videos'] : ['images', 'videos'], quality: 0.75 });
+    if (!res.canceled && res.assets[0]) {
+      const a = res.assets[0];
+      setAsset({ uri: a.uri, type: a.type === 'video' ? 'video' : 'image' });
+    }
   };
 
-  if (step === 'details' && media) {
-    return (
-      <View style={{ flex: 1, backgroundColor: c.background, paddingTop: 46 }}>
-        <View style={s.hdr}><TouchableOpacity onPress={() => setStep('studio')}><Ionicons name="arrow-back" size={24} color={c.text} /></TouchableOpacity><Text style={{ fontSize: 18, fontWeight: '700', color: c.text }}>{mode === 'REEL' ? 'New reel' : 'New post'}</Text><View style={{ width: 24 }} /></View>
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-          <Image source={{ uri: media.uri }} style={{ width: 120, height: 150, borderRadius: 12, alignSelf: 'center', marginBottom: 14, backgroundColor: '#111' }} />
-          <TextInput value={caption} onChangeText={setCaption} multiline placeholder="Write a caption and add hashtags..." placeholderTextColor={c.muted} style={{ color: c.text, fontSize: 15, minHeight: 70, marginBottom: 10 }} />
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-            {['#Hashtags', 'Poll', 'Prompt'].map((ch) => <TouchableOpacity key={ch} onPress={() => setCaption((p) => `${p} ${ch === '#Hashtags' ? '#flevora #trending' : `[${ch}]`}`.trim())} style={{ backgroundColor: c.input, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10 }}><Text style={{ color: c.text, fontSize: 12, fontWeight: '600' }}>{ch}</Text></TouchableOpacity>)}
-          </View>
-          <TextInput value={tags} onChangeText={setTags} placeholder="Tag people (@user1, @user2)" placeholderTextColor={c.muted} style={[s.dInp, { backgroundColor: c.input, color: c.text }]} />
-          <TextInput value={loc} onChangeText={setLoc} placeholder="Add location" placeholderTextColor={c.muted} style={[s.dInp, { backgroundColor: c.input, color: c.text }]} />
-          <TextInput value={link} onChangeText={setLink} placeholder="Add link" placeholderTextColor={c.muted} style={[s.dInp, { backgroundColor: c.input, color: c.text }]} />
-          {mode === 'REEL' && <TextInput value={audio} onChangeText={setAudio} placeholder="Rename audio (Original Audio)" placeholderTextColor={c.muted} style={[s.dInp, { backgroundColor: c.input, color: c.text }]} />}
-          <View style={s.swRow}><Text style={{ color: c.text, fontWeight: '600' }}>Add AI label</Text><Switch value={aiLabel} onValueChange={setAiLabel} /></View>
-          <TouchableOpacity style={s.swRow} onPress={() => setAudience((a) => a === 'Everyone' ? 'Close Friends' : 'Everyone')}><Text style={{ color: c.text, fontWeight: '600' }}>Audience</Text><Text style={{ color: BRAND, fontWeight: '700' }}>{audience} ›</Text></TouchableOpacity>
-          <TouchableOpacity style={s.swRow} onPress={() => setShowMore(true)}><Text style={{ color: c.text, fontWeight: '600' }}>More options</Text><Ionicons name="chevron-forward" size={18} color={c.muted} /></TouchableOpacity>
-        </ScrollView>
-        <View style={{ flexDirection: 'row', gap: 10, padding: 14 }}>
-          <TouchableOpacity style={[s.bBtn, { backgroundColor: c.input }]} onPress={saveDraft}><Text style={{ color: c.text, fontWeight: '700' }}>Save draft</Text></TouchableOpacity>
-          <TouchableOpacity style={[s.bBtn, { backgroundColor: '#3B82F6' }]} disabled={busy} onPress={uploadAndShare}><Text style={{ color: '#fff', fontWeight: '700' }}>{busy ? `Uploading ${pct}%` : 'Share'}</Text></TouchableOpacity>
-        </View>
-        <MoreOptionsModal visible={showMore} onClose={() => setShowMore(false)} opts={opts} setOpts={setOpts} isReel={mode === 'REEL'} c={c} />
-      </View>
-    );
-  }
+  const handlePublish = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    if (mode === 'LIVE') return Alert.alert('Live Streaming', 'Live video streaming server key ke bina free plan par available nahi hai. Reel ya Story post kar sakte ho!');
+    if (!asset) return Alert.alert('Select Media', 'Pehle gallery ya camera se photo/video select karo.');
+    setUploading(true);
+    try {
+      const data = new FormData();
+      data.append('file', { uri: asset.uri, type: asset.type === 'video' ? 'video/mp4' : 'image/jpeg', name: `flev_${Date.now()}` } as any);
+      data.append('upload_preset', UPLOAD_PRESET);
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${asset.type}/upload`, { method: 'POST', body: data });
+      const json = await res.json();
+      if (!json.secure_url) throw new Error('Upload failed');
+
+      const uSnap = await getDoc(doc(db, 'users', uid));
+      const ud = uSnap.data() || {};
+      if (mode === 'STORY') {
+        await addDoc(collection(db, 'stories'), {
+          uid, username: ud.username || 'user', mediaUrl: json.secure_url, mediaType: asset.type,
+          closeFriendsOnly: cfOnly, allowedUids: cfOnly ? (ud.closeFriends || []) : [],
+          viewers: [], viewerNames: [], likes: [], replies: {}, expiresAt: Date.now() + 86400000, createdAt: serverTimestamp(),
+        });
+      } else {
+        await addDoc(collection(db, 'posts'), {
+          uid, username: ud.username || 'user', avatar: ud.photoUrl || ud.avatar || '',
+          mediaUrl: json.secure_url, mediaType: mode === 'REEL' ? 'video' : asset.type,
+          caption: caption.trim(), location: location.trim(), filter, likes: [], reposts: [], commentsCount: 0, views: 0,
+          createdAt: serverTimestamp(),
+        });
+      }
+      setAsset(null); setCaption(''); setLocation('');
+      closeAll();
+    } catch {
+      Alert.alert('Error', 'Upload failed, please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#0B0B10', paddingTop: 46, justifyContent: 'space-between' }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16 }}>
-        <TouchableOpacity onPress={() => (media ? setShowDraftAsk(true) : router.back())}><Ionicons name="close" size={28} color="#fff" /></TouchableOpacity>
-        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>{mode}</Text>
-        <View style={{ width: 28 }} />
+    <View style={[s.wrap, { backgroundColor: c.background }]}>
+      <View style={[s.top, { borderBottomColor: c.border }]}>
+        <TouchableOpacity onPress={handleClose} hitSlop={10}><Ionicons name="close" size={28} color={c.text} /></TouchableOpacity>
+        <Text style={{ color: c.text, fontSize: 17, fontWeight: '800' }}>New {mode.charAt(0) + mode.slice(1).toLowerCase()}</Text>
+        <TouchableOpacity onPress={handlePublish} disabled={uploading} style={[s.shareBtn, { opacity: uploading ? 0.5 : 1 }]}>
+          {uploading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Share</Text>}
+        </TouchableOpacity>
       </View>
 
-      {mode === 'LIVE' ? (
-        <View style={{ alignItems: 'center', padding: 24 }}><Ionicons name="radio-outline" size={56} color="#9CA3AF" /><Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginTop: 12 }}>Go Live</Text><Text style={{ color: '#9CA3AF', textAlign: 'center', marginTop: 6 }}>Live streaming Spark free tier par available nahi hai.</Text></View>
-      ) : media ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16 }}>
-          <Image source={{ uri: media.uri }} style={{ width: '100%', height: '78%', borderRadius: 16 }} resizeMode="contain" />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 44, marginTop: 10 }} contentContainerStyle={{ gap: 8 }}>
-            {FILTERS.map((f) => <TouchableOpacity key={f} onPress={() => setFilter(f)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: filter === f ? BRAND : '#1F2937' }}><Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{f}</Text></TouchableOpacity>)}
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
+        <View style={[s.preview, { backgroundColor: c.card, borderColor: c.border }]}>
+          {asset ? (
+            asset.type === 'image' ? <Image source={{ uri: asset.uri }} style={s.media} resizeMode="cover" /> : (
+              <View style={{ alignItems: 'center', gap: 8 }}><Ionicons name="videocam" size={48} color={BRAND} /><Text style={{ color: c.text, fontWeight: '700' }}>Video Selected ({filter})</Text></View>
+            )
+          ) : (
+            <View style={{ alignItems: 'center', gap: 10 }}>
+              <Ionicons name={mode === 'LIVE' ? 'radio' : 'images-outline'} size={48} color={BRAND} />
+              <Text style={{ color: c.muted }}>{mode === 'LIVE' ? 'Ready to go Live' : 'Choose photo or video'}</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity onPress={pickGallery} style={[s.pickBtn, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Ionicons name="images" size={20} color={BRAND} /><Text style={{ color: c.text, fontWeight: '700' }}>Gallery</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={openCamera} style={[s.pickBtn, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Ionicons name="camera" size={20} color={BRAND} /><Text style={{ color: c.text, fontWeight: '700' }}>Camera</Text>
+          </TouchableOpacity>
+        </View>
+
+        {mode !== 'LIVE' && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {FILTERS.map((f) => (
+              <TouchableOpacity key={f} onPress={() => setFilter(f)} style={[s.chip, { backgroundColor: filter === f ? BRAND : c.card, borderColor: c.border }]}>
+                <Text style={{ color: filter === f ? '#fff' : c.text, fontWeight: '600', fontSize: 13 }}>{f}</Text>
+              </TouchableOpacity>
+            ))}
           </ScrollView>
-        </View>
-      ) : (
-        <View style={{ alignItems: 'center', gap: 16 }}>
-          <TouchableOpacity style={s.pickBtn} onPress={() => pick(true)}><Ionicons name="camera" size={24} color="#fff" /><Text style={s.pTxt}>Open Camera</Text></TouchableOpacity>
-          <TouchableOpacity style={[s.pickBtn, { backgroundColor: '#1F2937' }]} onPress={() => pick(false)}><Ionicons name="images" size={24} color="#fff" /><Text style={s.pTxt}>Choose from Gallery</Text></TouchableOpacity>
-        </View>
-      )}
+        )}
 
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 18, paddingBottom: 26 }}>
-        <View style={{ flexDirection: 'row', gap: 16 }}>
-          {(['POST', 'STORY', 'REEL', 'LIVE'] as const).map((md) => (
-            <TouchableOpacity key={md} onPress={() => setMode(md)}><Text style={{ color: mode === md ? '#fff' : '#6B7280', fontWeight: '700' }}>{md}</Text></TouchableOpacity>
-          ))}
-        </View>
-        {media && mode !== 'LIVE' && <TouchableOpacity style={s.nextBtn} onPress={() => setStep('details')}><Text style={{ color: '#fff', fontWeight: '700' }}>Next →</Text></TouchableOpacity>}
+        {mode === 'STORY' ? (
+          <TouchableOpacity onPress={() => setCfOnly((v) => !v)} style={[s.cfRow, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Ionicons name="star" size={20} color={cfOnly ? '#10B981' : c.muted} />
+            <Text style={{ color: c.text, fontWeight: '700', flex: 1 }}>Close Friends Only</Text>
+            <Ionicons name={cfOnly ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={cfOnly ? '#10B981' : c.muted} />
+          </TouchableOpacity>
+        ) : (
+          <>
+            <TextInput value={caption} onChangeText={setCaption} placeholder="Write a caption & #hashtags..." placeholderTextColor={c.muted} multiline style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border, minHeight: 80 }]} />
+            <TextInput value={location} onChangeText={setLocation} placeholder="Add location..." placeholderTextColor={c.muted} style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]} />
+          </>
+        )}
+      </ScrollView>
+
+      <View style={[s.modeBar, { borderTopColor: c.border, backgroundColor: c.background }]}>
+        {MODES.map((m) => (
+          <TouchableOpacity key={m} onPress={() => setMode(m)} style={[s.modePill, mode === m && { backgroundColor: BRAND }]}>
+            <Text style={{ color: mode === m ? '#fff' : c.muted, fontWeight: '800', fontSize: 12 }}>{m}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
-      <SaveDraftModal visible={showDraftAsk} onStartOver={() => { setShowDraftAsk(false); setMedia(null); }} onSaveDraft={saveDraft} onKeepEditing={() => setShowDraftAsk(false)} />
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  hdr: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10 },
-  dInp: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, marginBottom: 10 },
-  swRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
-  bBtn: { flex: 1, alignItems: 'center', paddingVertical: 14, borderRadius: 12 },
-  pickBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: BRAND, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 24 },
-  pTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  nextBtn: { backgroundColor: '#3B82F6', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 20 },
+  wrap: { flex: 1 },
+  top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 48, paddingBottom: 12, paddingHorizontal: 16, borderBottomWidth: 1 },
+  shareBtn: { backgroundColor: BRAND, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
+  preview: { height: 250, borderRadius: 16, borderWidth: 1, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  media: { width: '100%', height: '100%' },
+  pickBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 13, borderRadius: 12, borderWidth: 1 },
+  chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16, borderWidth: 1 },
+  cfRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 12, borderWidth: 1 },
+  input: { borderWidth: 1, borderRadius: 12, padding: 12, fontSize: 14 },
+  modeBar: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 12, paddingHorizontal: 10, borderTopWidth: 1 },
+  modePill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18 },
 });
