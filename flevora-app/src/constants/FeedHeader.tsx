@@ -22,7 +22,7 @@ export function FeedHeader() {
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [hasUnread, setHasUnread] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     const u1 = onSnapshot(query(collection(db, 'stories'), orderBy('createdAt', 'desc')), (snap) => {
@@ -41,7 +41,7 @@ export function FeedHeader() {
       if (uid && m[uid]) setMe(m[uid]);
     }, () => {});
     if (!uid) return () => { u1(); u2(); };
-    const u3 = onSnapshot(query(collection(db, 'notifications'), where('toUid', '==', uid), where('read', '==', false)), (sn) => setHasUnread(!sn.empty), () => {});
+    const u3 = onSnapshot(query(collection(db, 'notifications'), where('toUid', '==', uid), where('read', '==', false)), (sn) => setUnreadCount(sn.size), () => {});
     const u4 = onSnapshot(doc(db, 'users', uid), (d) => { if (d.exists()) setMe({ id: d.id, ...d.data() }); }, () => {});
     return () => { u1(); u2(); u3(); u4(); };
   }, [uid]);
@@ -69,8 +69,12 @@ export function FeedHeader() {
             <Ionicons name="add-circle-outline" size={28} color={c.text} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setNotifOpen(true)} hitSlop={8}>
-            <Ionicons name={hasUnread ? 'heart' : 'heart-outline'} size={26} color={hasUnread ? NEON.pink : c.text} />
-            {hasUnread && <View style={[s.dot, { borderColor: c.background }]} />}
+            <Ionicons name={unreadCount > 0 ? 'heart' : 'heart-outline'} size={26} color={unreadCount > 0 ? NEON.pink : c.text} />
+            {unreadCount > 0 && (
+              <View style={[s.badge, { borderColor: c.background }]}>
+                <Text style={s.badgeTxt}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -78,9 +82,9 @@ export function FeedHeader() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[s.storyBar, { borderBottomColor: c.border }]}>
         <View style={s.storyItem}>
           <TouchableOpacity activeOpacity={0.85} onPress={() => (hasMyStory ? setViewStories(myStories) : setCreatorOpen(true))}>
-            <View style={[s.ring, { borderColor: myRingColor
+            <View style={[s.ring, { borderColor
 
- }]}>
+: myRingColor }]}>
               {myDp ? <Image source={{ uri: myDp }} style={s.avatar} /> : <View style={[s.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={26} color="#fff" /></View>}
             </View>
           </TouchableOpacity>
@@ -117,7 +121,8 @@ export function FeedHeader() {
 
 const s = StyleSheet.create({
   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingTop: 48, paddingBottom: 10, borderBottomWidth: 0.5 },
-  dot: { width: 9, height: 9, borderRadius: 4.5, backgroundColor: '#EF4444', position: 'absolute', top: 0, right: -1, borderWidth: 1.5 },
+  badge: { position: 'absolute', top: -4, right: -6, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#EF4444', borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
+  badgeTxt: { color: '#fff', fontSize: 10, fontWeight: '800' },
   storyBar: { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 0.5 },
   storyItem: { alignItems: 'center', marginRight: 14, width: 70 },
   ring: { width: 68, height: 68, borderRadius: 34, borderWidth: 2.5, justifyContent: 'center', alignItems: 'center', padding: 2 },
