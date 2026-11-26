@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { AudioModule, RecordingPresets, useAudioPlayer, useAudioRecorder } from 'expo-audio';
 import { useRouter } from 'expo-router';
-import { doc, updateDoc, deleteDoc, addDoc, setDoc, collection, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, deleteDoc, collection, arrayUnion, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { db } from '../config';
 import { BRAND, NEON } from './theme';
 import { sendPush } from './push';
@@ -51,15 +51,38 @@ export function DmChatRoom({ myUid, me, chatId: propChatId, convo, targetUid, ta
     const body = text.trim();
     if (blocked || (!body && !mediaUrl)) return;
     if (editing) {
-      await updateDoc(doc(db, 'conversations', chatId, 'messages', editing.id), { text: body, editedAt: serverTimestamp() }).catch(() => {});
+      await updateDoc(doc(db, 'conversations', chatId, 'messages', editing.id), { text: body, editedAt: serverTimestamp() }).catch(() => Alert.alert('Error', 'Could not edit message.'));
       setEditing(null); setText(''); return;
     }
     setText('');
     const replySnapshot = replyTo ? { id: replyTo.id, text: replyTo.text || 'Media', senderUid: replyTo.senderUid } : null;
     setReplyTo(null);
-    await setDoc(doc(db, 'conversations', chatId), { participants: convo?.participants || [myUid, targetUid], updatedAt: serverTimestamp(), lastMessage: body || (mediaType === 'audio' ? '🎤 Voice message' : '📷 Media'), lastSenderUid: myUid }, { merge: true });
-    await addDoc(collection(db, 'conversations', chatId, 'messages'), { senderUid: myUid, senderName: me?.username || 'user', text: body, mediaUrl, mediaType, replyTo: replySnapshot, read: false, createdAt: serverTimestamp() });
-    if (otherUser?.expoPushToken && !(me?.mutedMsgChats?.[targetUid])) sendPush(otherUser.expoPushToken, me?.username || 'New Message', body || 'Sent a message');
+
+    try {
+      const batch = writeBatch(db);
+      const convoRef = doc(db, 'conversations', chatId);
+      const msgRef = doc(collection(db, 'conversations', chatId, 'messages'));
+      batch.set(convoRef, {
+        participants: convo?.participants || [myUid, targetUid],
+        updatedAt: serverTimestamp(),
+        lastMessage: body || (mediaType === 'audio' ? '🎤 Voice message' : '📷 Media'),
+        lastSenderUid: myUid,
+      }, { merge: true });
+      batch.set(msgRef, {
+        senderUid: myUid,
+        senderName: me?.username || 'user',
+        text: body,
+        mediaUrl,
+        mediaType,
+        replyTo: replySnapshot,
+        read: false,
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
+      if (otherUser?.expoPushToken && !(me?.mutedMsgChats?.[targetUid])) sendPush(otherUser.expoPushToken, me?.username || 'New Message', body || 'Sent a message');
+    } catch {
+      Alert.alert('Failed', 'Message could not be sent.');
+    }
   };
 
   const uploadToCloud = async (uri: string, type: 'image' | 'video' | 'audio') => {
@@ -98,9 +121,9 @@ export function DmChatRoom({ myUid, me, chatId: propChatId, convo, targetUid, ta
     <View style={{ flex: 1, backgroundColor: c.background }}>
       <View style={[s.hdr, { borderBottomColor: c.border }]}>
         <TouchableOpacity onPress={onBack} hitSlop={10}><Ionicons name="arrow-back" size={24} color={c.text} /></TouchableOpacity>
-        <TouchableOpacity onPress={() => !isGroup && targetUid && router.push(`/user/${targetUid}` as any)} style={{ flexDirection: 'row', alignItems
+        <TouchableOpacity on
 
-: 'center', gap: 10, flex: 1 }}>
+Press={() => !isGroup && targetUid && router.push(`/user/${targetUid}` as any)} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
           <View>{dp ? <Image source={{ uri: dp }} style={s.av} /> : <View style={[s.av, s.ph]}><Ionicons name={isGroup ? 'people' : 'person'} size={18} color="#fff" /></View>}{online && <View style={[s.dot, { borderColor: c.background }]} />}</View>
           <View style={{ flex: 1 }}><Text style={{ fontSize: 16, fontWeight: '800', color: c.text }} numberOfLines={1}>{isGroup ? convo?.groupName : (otherUser?.username || targetName)}</Text><Text style={{ fontSize: 12, color: online ? '#10B981' : c.muted }}>{sub}</Text></View>
         </TouchableOpacity>
@@ -114,6 +137,7 @@ export function DmChatRoom({ myUid, me, chatId: propChatId, convo, targetUid, ta
         ListEmptyComponent={<Text style={{ color: c.muted, textAlign: 'center', marginTop: 40 }}>Say hi to start the conversation!</Text>}
         renderItem={({ item }) => {
           const mine = item.senderUid === myUid;
+          const reactList = item.reactions && Object.keys(item.reactions).length ? Object.values(item.reactions).join(' ') : item.reaction || '';
           return (
             <View style={{ alignItems: mine ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
               {isGroup && !mine && <Text style={{ color: c.muted, fontSize: 11, marginBottom: 2 }}>@{item.senderName || 'user'}</Text>}
@@ -122,7 +146,7 @@ export function DmChatRoom({ myUid, me, chatId: propChatId, convo, targetUid, ta
                   {!!item.replyTo && <View style={s.repBox}><Text style={{ color: mine ? '#eee' : c.muted, fontSize: 11 }} numberOfLines={1}>↩ {item.replyTo.text}</Text></View>}
                   {item.mediaType === 'audio' && !!item.mediaUrl ? <VoiceBubble uri={item.mediaUrl} mine={mine} textColor={c.text} /> : !!item.mediaUrl ? <Image source={{ uri: item.mediaType === 'video' ? item.mediaUrl.replace(/\.mp4.*$/, '.jpg') : item.mediaUrl }} style={s.media} /> : null}
                   {!!item.text && <Text style={{ color: mine ? '#fff' : c.text, fontSize: 14 }}>{item.text}{item.editedAt ? ' (edited)' : ''}</Text>}
-                  {!!item.reaction && <Text style={{ fontSize: 14, marginTop: 2 }}>{item.reaction}</Text>}
+                  {!!reactList && <Text style={{ fontSize: 13, marginTop: 2 }}>{reactList}</Text>}
                 </TouchableOpacity>
                 {!!item.mediaUrl && <TouchableOpacity onPress={() => onForward?.(item)}><Ionicons name="paper-plane-outline" size={16} color={c.text} /></TouchableOpacity>}
               </View>
@@ -134,11 +158,11 @@ export function DmChatRoom({ myUid, me, chatId: propChatId, convo, targetUid, ta
 
       {!!menuMsg && (
         <View style={[s.reactBar, { backgroundColor: c.card, borderColor: c.border }]}>
-          {REACTS.map((e) => <TouchableOpacity key={e} onPress={() => { updateDoc(doc(db, 'conversations', chatId, 'messages', menuMsg.id), { reaction: e }); setMenuMsg(null); }}><Text style={{ fontSize: 21 }}>{e}</Text></TouchableOpacity>)}
+          {REACTS.map((e) => <TouchableOpacity key={e} onPress={() => { updateDoc(doc(db, 'conversations', chatId, 'messages', menuMsg.id), { [`reactions.${myUid}`]: e }).catch(() => {}); setMenuMsg(null); }}><Text style={{ fontSize: 21 }}>{e}</Text></TouchableOpacity>)}
           <TouchableOpacity onPress={() => { setReplyTo(menuMsg); setMenuMsg(null); }}><Ionicons name="arrow-undo" size={19} color={c.text} /></TouchableOpacity>
           {menuMsg.senderUid === myUid && !!menuMsg.text && <TouchableOpacity onPress={() => { setEditing(menuMsg); setText(menuMsg.text); setMenuMsg(null); }}><Ionicons name="create-outline" size={19} color={c.text} /></TouchableOpacity>}
-          <TouchableOpacity onPress={() => { updateDoc(doc(db, 'conversations', chatId, 'messages', menuMsg.id), { deletedFor: arrayUnion(myUid) }); setMenuMsg(null); }}><Ionicons name="eye-off-outline" size={19} color={c.muted} /></TouchableOpacity>
-          {menuMsg.senderUid === myUid && <TouchableOpacity onPress={() => { deleteDoc(doc(db, 'conversations', chatId, 'messages', menuMsg.id)); setMenuMsg(null); }}><Ionicons name="trash" size={19} color="#EF4444" /></TouchableOpacity>}
+          <TouchableOpacity onPress={() => { updateDoc(doc(db, 'conversations', chatId, 'messages', menuMsg.id), { deletedFor: arrayUnion(myUid) }).catch(() => {}); setMenuMsg(null); }}><Ionicons name="eye-off-outline" size={19} color={c.muted} /></TouchableOpacity>
+          {menuMsg.senderUid === myUid && <TouchableOpacity onPress={() => { deleteDoc(doc(db, 'conversations', chatId, 'messages', menuMsg.id)).catch(() => {}); setMenuMsg(null); }}><Ionicons name="trash" size={19} color="#EF4444" /></TouchableOpacity>}
           <TouchableOpacity onPress={() => setMenuMsg(null)}><Ionicons name="close" size={19} color={c.muted} /></TouchableOpacity>
         </View>
       )}
@@ -185,3 +209,4 @@ const s = StyleSheet.create({
   inpBar: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 0.5 },
   inp: { flex: 1, borderWidth: 1, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 8, fontSize: 14, maxHeight: 90 },
 });
+            
