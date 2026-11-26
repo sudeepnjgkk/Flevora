@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Image, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, Modal, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { collection, query, where, orderBy, onSnapshot, doc } from 'firebase/firestore';
@@ -8,6 +8,7 @@ import { useTheme, BRAND } from './theme';
 import { StoryCreatorModal } from './StoryCreatorModal';
 import { StoryViewerModal } from './StoryViewerModal';
 import { NotificationModal } from './NotificationModal';
+import UploadScreen from '../app/upload';
 
 export { CommentModal } from './CommentModal';
 
@@ -20,6 +21,7 @@ export function FeedHeader() {
   const [stories, setStories] = useState<any[]>([]);
   const [viewStories, setViewStories] = useState<any[] | null>(null);
   const [creatorOpen, setCreatorOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
 
@@ -40,9 +42,7 @@ export function FeedHeader() {
       if (uid && m[uid]) setMe(m[uid]);
     }, () => {});
     if (!uid) return () => { u1(); u2(); };
-    const u3 = onSnapshot(query(collection(db, 'notifications'), where('toUid', '==', uid), where('read', '==', false)), (sn) => {
-      setHasUnread(!sn.empty);
-    }, () => {});
+    const u3 = onSnapshot(query(collection(db, 'notifications'), where('toUid', '==', uid), where('read', '==', false)), (sn) => setHasUnread(!sn.empty), () => {});
     const u4 = onSnapshot(doc(db, 'users', uid), (d) => { if (d.exists()) setMe({ id: d.id, ...d.data() }); }, () => {});
     return () => { u1(); u2(); u3(); u4(); };
   }, [uid]);
@@ -64,7 +64,7 @@ export function FeedHeader() {
   return (
     <View>
       <View style={[s.topBar, { backgroundColor: c.background, borderBottomColor: c.border }]}>
-        <TouchableOpacity onPress={() => router.push('/upload' as any)} hitSlop={8}>
+        <TouchableOpacity onPress={() => setUploadOpen(true)} hitSlop={8}>
           <Ionicons name="add" size={28} color={c.text} />
         </TouchableOpacity>
         <Text style={s.logo}>Flevora</Text>
@@ -113,6 +113,9 @@ export function FeedHeader() {
         })}
       </ScrollView>
 
+      <Modal visible={uploadOpen} animationType="slide" onRequestClose={() => setUploadOpen(false)}>
+        <UploadScreen initialMode="POST" onClose={() => setUploadOpen(false)} />
+      </Modal>
       <StoryCreatorModal visible={creatorOpen} onClose={() => setCreatorOpen(false)} />
       <StoryViewerModal visible={!!viewStories} stories={viewStories || []} onClose={() => setViewStories(null)} onAddStory={() => { setViewStories(null); setCreatorOpen(true); }} />
       <NotificationModal visible={notifOpen} onClose={() => setNotifOpen(false)} />
@@ -131,4 +134,3 @@ const s = StyleSheet.create({
   plusBadge: { position: 'absolute', right: 2, bottom: 18, width: 22, height: 22, borderRadius: 11, backgroundColor: '#111', borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
   storyName: { fontSize: 11, marginTop: 4 },
 });
-    
