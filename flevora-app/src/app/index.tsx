@@ -8,11 +8,10 @@ import { auth, db } from '../config';
 import { FeedHeader, CommentModal } from '../constants/FeedHeader';
 import { ShareModal } from '../constants/ShareModal';
 import { StoryViewerModal } from '../constants/StoryViewerModal';
-import { GlossyIcon } from '../constants/GlossyIcon';
 import { useTheme, BRAND, NEON } from '../constants/theme';
 import { sendPush } from '../constants/push';
 
-const W = Dimensions.get('window').width - 24;
+const W = Dimensions.get('window').width;
 
 const formatTime = (ts: any) => {
   const date = ts?.toDate ? ts.toDate() : null;
@@ -127,7 +126,6 @@ export default function HomeScreen() {
         data={posts}
         keyExtractor={(i) => i.id}
         ListHeaderComponent={<FeedHeader />}
-        contentContainerStyle={{ paddingBottom: 16 }}
         onViewableItemsChanged={onView}
         viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
         onEndReached={() => setLimitCount((n) => n + 10)}
@@ -139,27 +137,24 @@ export default function HomeScreen() {
           const uname = owner?.username || item.username || 'user';
           const userStories = stories.filter((st) => st.uid === item.uid);
           const hasStory = userStories.length > 0;
-          const liked = Array.isArray(item.likes) && item.likes.includes(uid);
+          const liked = Array.
+
+isArray(item.likes) && item.likes.includes(uid);
           const saved = Array.isArray(me?.savedPosts) && me.savedPosts.includes(item.id);
 
           return (
-            <View style={[s.card, { backgroundColor: c.card, borderColor: c.border }]}>
+            <View style={[s.card, { borderBottomColor: c.border }]}>
               <View style={s.rowHead}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <TouchableOpacity onPress={() => (hasStory ? setStoryList(userStories) : router.push(`/user/${item.uid}` as any))} onLongPress={() => onAvatarLongPress(item.uid, userStories)} style={[s.avRing, {
-
- borderColor: hasStory ? NEON.pink : 'transparent' }]}>
+                  <TouchableOpacity onPress={() => (hasStory ? setStoryList(userStories) : router.push(`/user/${item.uid}` as any))} onLongPress={() => onAvatarLongPress(item.uid, userStories)} style={[s.avRing, { borderColor: hasStory ? NEON.pink : 'transparent' }]}>
                     {dp ? <Image source={{ uri: dp }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={18} color="#fff" /></View>}
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => router.push(`/user/${item.uid}` as any)}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <Text style={{ color: c.text, fontWeight: '800', fontSize: 14 }}>@{uname}</Text>
-                      {owner?.verified && <Ionicons name="checkmark-circle" size={14} color={NEON.purple} />}
-                    </View>
-                    <Text style={{ color: c.muted, fontSize: 11 }}>{formatTime(item.createdAt)}</Text>
+                  <TouchableOpacity onPress={() => router.push(`/user/${item.uid}` as any)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 14 }}>@{uname}</Text>
+                    {owner?.verified && <Ionicons name="checkmark-circle" size={14} color={BRAND} />}
                   </TouchableOpacity>
                 </View>
-                <TouchableOpacity onPress={() => openPostOptions(item)} hitSlop={8}><Ionicons name="ellipsis-horizontal" size={20} color={c.muted} /></TouchableOpacity>
+                <TouchableOpacity onPress={() => openPostOptions(item)} hitSlop={8}><Ionicons name="ellipsis-vertical" size={18} color={c.muted} /></TouchableOpacity>
               </View>
 
               {item.mediaType === 'video' ? (
@@ -171,24 +166,21 @@ export default function HomeScreen() {
               )}
 
               <View style={s.actions}>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  <TouchableOpacity onPress={() => toggleLike(item)}><GlossyIcon name={liked ? 'heart' : 'heart-outline'} size={18} boxSize={36} active={liked} accent={NEON.pink} /></TouchableOpacity>
-                  <TouchableOpacity onPress={() => setCommentPost(item)}><GlossyIcon name="chatbubble-outline" size={18} boxSize={36} accent={NEON.purple} /></TouchableOpacity>
-                  <TouchableOpacity onPress={() => setSharePost(item)}><GlossyIcon name="paper-plane-outline" size={18} boxSize={36} accent={NEON.orange} /></TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 18 }}>
+                  <TouchableOpacity onPress={() => toggleLike(item)}><Ionicons name={liked ? 'heart' : 'heart-outline'} size={25} color={liked ? NEON.pink : c.text} /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setCommentPost(item)}><Ionicons name="chatbubble-outline" size={23} color={c.text} /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setSharePost(item)}><Ionicons name="paper-plane-outline" size={23} color={c.text} /></TouchableOpacity>
                 </View>
                 <TouchableOpacity onPress={() => uid && updateDoc(doc(db, 'users', uid), { savedPosts: saved ? arrayRemove(item.id) : arrayUnion(item.id) })}>
-                  <GlossyIcon name={saved ? 'bookmark' : 'bookmark-outline'} size={18} boxSize={36} active={saved} accent={NEON.magenta} />
+                  <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={23} color={saved ? BRAND : c.text} />
                 </TouchableOpacity>
               </View>
 
-              <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
-                <Text style={{ color: c.text, fontWeight: '800', fontSize: 13 }}>{item.likes?.length || 0} likes</Text>
-                {!!item.caption && <Text style={{ color: c.text, marginTop: 4, lineHeight: 19 }}><Text style={{ fontWeight: '800' }}>@{uname} </Text>{item.caption}</Text>}
-                {!!item.commentsCount && (
-                  <TouchableOpacity onPress={() => setCommentPost(item)} style={{ marginTop: 4 }}>
-                    <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>View all {item.commentsCount} comments</Text>
-                  </TouchableOpacity>
-                )}
+              <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
+                <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>{item.likes?.length || 0} likes</Text>
+                {!!item.caption && <Text style={{ color: c.text, marginTop: 3 }}><Text style={{ fontWeight: '700' }}>@{uname} </Text>{item.caption}</Text>}
+                {!!item.commentsCount && <TouchableOpacity onPress={() => setCommentPost(item)}><Text style={{ color: c.muted, fontSize: 12, marginTop: 3 }}>View all {item.commentsCount} comments</Text></TouchableOpacity>}
+                <Text style={{ color: c.muted, fontSize: 11, marginTop: 3 }}>{formatTime(item.createdAt)}</Text>
               </View>
             </View>
           );
@@ -202,12 +194,13 @@ export default function HomeScreen() {
 }
 
 const s = StyleSheet.create({
-  card: { marginHorizontal: 12, marginTop: 12, borderRadius: 22, borderWidth: 1, overflow: 'hidden' },
+  card: { borderBottomWidth: 0.5 },
   rowHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10 },
-  avRing: { width: 42, height: 42, borderRadius: 21, borderWidth: 2, justifyContent: 'center', alignItems: 'center', padding: 2 },
-  av: { width: 34, height: 34, borderRadius: 17 },
-  mediaWrap: { width: W, height: W * 1.12, backgroundColor: '#000' },
-  media: { width: W, height: W * 1.12, backgroundColor: '#000' },
-  volBtn: { position: 'absolute', right: 12, bottom: 12, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.62)', justifyContent: 'center', alignItems: 'center', zIndex: 20, elevation: 20 },
-  actions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10 },
+  avRing: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, justifyContent: 'center', alignItems: 'center', padding: 2 },
+  av: { width: 32, height: 32, borderRadius: 16 },
+  mediaWrap: { width: W, height: W * 1.15, backgroundColor: '#000' },
+  media: { width: W, height: W * 1.15, backgroundColor: '#000' },
+  volBtn: { position: 'absolute', right: 12, bottom: 12, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', zIndex: 20, elevation: 20 },
+  actions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
 });
+      
