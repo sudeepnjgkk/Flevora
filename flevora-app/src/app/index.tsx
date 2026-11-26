@@ -8,10 +8,11 @@ import { auth, db } from '../config';
 import { FeedHeader, CommentModal } from '../constants/FeedHeader';
 import { ShareModal } from '../constants/ShareModal';
 import { StoryViewerModal } from '../constants/StoryViewerModal';
-import { useTheme, BRAND } from '../constants/theme';
+import { GlossyIcon } from '../constants/GlossyIcon';
+import { useTheme, BRAND, NEON } from '../constants/theme';
 import { sendPush } from '../constants/push';
 
-const W = Dimensions.get('window').width;
+const W = Dimensions.get('window').width - 24;
 
 const formatTime = (ts: any) => {
   const date = ts?.toDate ? ts.toDate() : null;
@@ -27,17 +28,9 @@ function PostVideo({ uri, active, focused, onOpenReel }: { uri: string; active: 
   const [muted, setMuted] = useState(false);
   const player = useVideoPlayer(uri, (p) => { p.loop = true; p.muted = false; });
 
+  useEffect(() => { player.muted = muted; }, [muted, player]);
   useEffect(() => {
-    player.muted = muted;
-  }, [muted, player]);
-
-  useEffect(() => {
-    if (focused && active) {
-      player.muted = muted;
-      player.play();
-    } else {
-      player.pause();
-    }
+    if (focused && active) { player.muted = muted; player.play(); } else { player.pause(); }
   }, [focused, active, muted, player]);
 
   return (
@@ -45,7 +38,7 @@ function PostVideo({ uri, active, focused, onOpenReel }: { uri: string; active: 
       <VideoView player={player} style={s.media} surfaceType="textureView" nativeControls={false} contentFit="cover" />
       <Pressable onPress={() => { player.pause(); onOpenReel(); }} style={[StyleSheet.absoluteFill, { zIndex: 1 }]} />
       <TouchableOpacity onPress={() => setMuted((m) => !m)} style={s.volBtn} hitSlop={10}>
-        <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={18} color="#fff" />
+        <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={17} color="#fff" />
       </TouchableOpacity>
     </View>
   );
@@ -109,35 +102,24 @@ export default function HomeScreen() {
     lastTap.current = now;
   };
 
-  const toggleMute = async (targetUid: string) => {
-    if (!uid || uid === targetUid) return;
-    const mutedList = Array.isArray(me?.mutedUsers) ? me.mutedUsers : [];
-    const isMuted = mutedList.includes(targetUid);
-    await updateDoc(doc(db, 'users', uid), { mutedUsers: isMuted ? arrayRemove(targetUid) : arrayUnion(targetUid) }).catch(() => {});
-  };
-
   const onAvatarLongPress = (targetUid: string, userStories: any[]) => {
     const isMuted = Array.isArray(me?.mutedUsers) && me.mutedUsers.includes(targetUid);
     const btns: any[] = [];
     if (userStories.length > 0) btns.push({ text: 'View Story', onPress: () => setStoryList(userStories) });
     btns.push({ text: 'View Profile', onPress: () => router.push(`/user/${targetUid}` as any) });
-    if (targetUid !== uid) btns.push({ text: isMuted ? 'Unmute' : 'Mute', onPress: () => toggleMute(targetUid) });
+    if (targetUid !== uid) btns.push({ text: isMuted ? 'Unmute' : 'Mute', onPress: () => updateDoc(doc(db, 'users', uid), { mutedUsers: isMuted ? arrayRemove(targetUid) : arrayUnion(targetUid) }) });
     btns.push({ text: 'Cancel', style: 'cancel' });
     Alert.alert('Account Options', undefined, btns);
   };
 
   const openPostOptions = (post: any) => {
-    const btns: any[] = [
-      { text: 'Report Post', style: 'destructive', onPress: () => addDoc(collection(db, 'reports'), { postId: post.id, type: 'post', status: 'pending', reportedBy: uid, createdAt: serverTimestamp() }) },
-    ];
+    const btns: any[] = [{ text: 'Report Post', style: 'destructive', onPress: () => addDoc(collection(db, 'reports'), { postId: post.id, type: 'post', status: 'pending', reportedBy: uid, createdAt: serverTimestamp() }) }];
     if (post.uid === uid) btns.unshift({ text: 'Delete Post', style: 'destructive', onPress: () => deleteDoc(doc(db, 'posts', post.id)) });
     btns.push({ text: 'Cancel', style: 'cancel' });
     Alert.alert('Post Options', undefined, btns);
   };
 
-  const onView = useRef(({ viewableItems }: any) => {
-    if (viewableItems[0]?.item?.id) setActiveId(viewableItems[0].item.id);
-  }).current;
+  const onView = useRef(({ viewableItems }: any) => { if (viewableItems[0]?.item?.id) setActiveId(viewableItems[0].item.id); }).current;
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
@@ -145,6 +127,7 @@ export default function HomeScreen() {
         data={posts}
         keyExtractor={(i) => i.id}
         ListHeaderComponent={<FeedHeader />}
+        contentContainerStyle={{ paddingBottom: 16 }}
         onViewableItemsChanged={onView}
         viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
         onEndReached={() => setLimitCount((n) => n + 10)}
@@ -160,23 +143,23 @@ export default function HomeScreen() {
           const saved = Array.isArray(me?.savedPosts) && me.savedPosts.includes(item.id);
 
           return (
-            <View style={[s.card, { borderBottomColor: c.border }]}>
+            <View style={[s.card, { backgroundColor: c.card, borderColor: c.border }]}>
               <View style={s.rowHead}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <TouchableOpacity
-                    onPress={() => (hasStory ? setStoryList(userStories) : router.push(`/user/${item.uid}` as any))}
-                    onLongPress={() => onAvatarLongPress(item.uid, userStories)}
-                    style={[s.avRing, { borderColor: hasStory ? BRAND : 'transparent' }]}
-                  >
+                  <TouchableOpacity onPress={() => (hasStory ? setStoryList(userStories) : router.push(`/user/${item.uid}` as any))} onLongPress={() => onAvatarLongPress(item.uid, userStories)} style={[s.avRing, {
+
+ borderColor: hasStory ? NEON.pink : 'transparent' }]}>
                     {dp ? <Image source={{ uri: dp }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={18} color="#fff" /></View>}
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => router.push(`/user/${item.uid}` as any)}>
-                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 14 }}>@{uname}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Text style={{ color: c.text, fontWeight: '800', fontSize: 14 }}>@{uname}</Text>
+                      {owner?.verified && <Ionicons name="checkmark-circle" size={14} color={NEON.purple} />}
+                    </View>
+                    <Text style={{ color: c.muted, fontSize: 11 }}>{formatTime(item.createdAt)}</Text>
                   </TouchableOpacity>
                 </View>
-                <TouchableOpacity onPress={() => openPostOptions(item)} hitSlop={8}>
-                  <Ionicons name="ellipsis-vertical" size={18} color={c.muted} />
-                </TouchableOpacity>
+                <TouchableOpacity onPress={() => openPostOptions(item)} hitSlop={8}><Ionicons name="ellipsis-horizontal" size={20} color={c.muted} /></TouchableOpacity>
               </View>
 
               {item.mediaType === 'video' ? (
@@ -188,26 +171,24 @@ export default function HomeScreen() {
               )}
 
               <View style={s.actions}>
-                <View style={{ flexDirection: 'row', gap: 16 }}>
-                  <TouchableOpacity onPress={() => toggleLike(item)}>
-                    <Ionicons name={liked ? 'heart' : 'heart-outline'} size={25} color={liked ? '#EF4444' : c.text} />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => setCommentPost(item)}>
-                    <Ionicons name="chatbubble-outline" size={23} color={c.text} />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => setSharePost(item)}>
-                    <Ionicons name="paper-plane-outline" size={23} color={c.text} />
-                  </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity onPress={() => toggleLike(item)}><GlossyIcon name={liked ? 'heart' : 'heart-outline'} size={18} boxSize={36} active={liked} accent={NEON.pink} /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setCommentPost(item)}><GlossyIcon name="chatbubble-outline" size={18} boxSize={36} accent={NEON.purple} /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setSharePost(item)}><GlossyIcon name="paper-plane-outline" size={18} boxSize={36} accent={NEON.orange} /></TouchableOpacity>
                 </View>
                 <TouchableOpacity onPress={() => uid && updateDoc(doc(db, 'users', uid), { savedPosts: saved ? arrayRemove(item.id) : arrayUnion(item.id) })}>
-                  <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={23} color={saved ? BRAND : c.text} />
+                  <GlossyIcon name={saved ? 'bookmark' : 'bookmark-outline'} size={18} boxSize={36} active={saved} accent={NEON.magenta} />
                 </TouchableOpacity>
               </View>
 
-              <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
-                <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>{item.likes?.length || 0} likes</Text>
-                {!!item.caption && <Text style={{ color: c.text, marginTop: 3 }}><Text style={{ fontWeight: '700' }}>@{uname} </Text>{item.caption}</Text>}
-                <Text style={{ color: c.muted, fontSize: 11, marginTop: 4 }}>{formatTime(item.createdAt)}</Text>
+              <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
+                <Text style={{ color: c.text, fontWeight: '800', fontSize: 13 }}>{item.likes?.length || 0} likes</Text>
+                {!!item.caption && <Text style={{ color: c.text, marginTop: 4, lineHeight: 19 }}><Text style={{ fontWeight: '800' }}>@{uname} </Text>{item.caption}</Text>}
+                {!!item.commentsCount && (
+                  <TouchableOpacity onPress={() => setCommentPost(item)} style={{ marginTop: 4 }}>
+                    <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>View all {item.commentsCount} comments</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           );
@@ -221,12 +202,12 @@ export default function HomeScreen() {
 }
 
 const s = StyleSheet.create({
-  card: { borderBottomWidth: 0.5 },
+  card: { marginHorizontal: 12, marginTop: 12, borderRadius: 22, borderWidth: 1, overflow: 'hidden' },
   rowHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10 },
-  avRing: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, justifyContent: 'center', alignItems: 'center', padding: 2 },
-  av: { width: 32, height: 32, borderRadius: 16 },
-  mediaWrap: { width: W, height: W * 1.15, backgroundColor: '#000' },
-  media: { width: W, height: W * 1.15, backgroundColor: '#000' },
-  volBtn: { position: 'absolute', right: 12, bottom: 12, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', zIndex: 20, elevation: 20 },
-  actions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
+  avRing: { width: 42, height: 42, borderRadius: 21, borderWidth: 2, justifyContent: 'center', alignItems: 'center', padding: 2 },
+  av: { width: 34, height: 34, borderRadius: 17 },
+  mediaWrap: { width: W, height: W * 1.12, backgroundColor: '#000' },
+  media: { width: W, height: W * 1.12, backgroundColor: '#000' },
+  volBtn: { position: 'absolute', right: 12, bottom: 12, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.62)', justifyContent: 'center', alignItems: 'center', zIndex: 20, elevation: 20 },
+  actions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10 },
 });
