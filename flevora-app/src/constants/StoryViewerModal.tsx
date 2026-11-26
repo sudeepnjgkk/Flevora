@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, Text, TouchableOpacity, Image, TextInput, FlatList, Animated, StyleSheet, Share, Alert } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, Image, TextInput, FlatList, Animated, KeyboardAvoidingView, StyleSheet, Share, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { doc, updateDoc, deleteDoc, addDoc, setDoc, collection, onSnapshot, arrayUnion, arrayRemove, serverTimestamp } from 'firebase/firestore';
@@ -83,7 +83,7 @@ export function StoryViewerModal({ visible, onClose, stories, initialIndex = 0, 
 
   return (
     <Modal visible={visible} animationType="fade" onRequestClose={onClose}>
-      <View style={s.wrap}>
+      <KeyboardAvoidingView behavior="padding" style={s.wrap}>
         {story.mediaType === 'video' ? <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="cover" nativeControls={false} surfaceType="textureView" /> : <Image source={{ uri: story.mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
         <View style={s.hdr}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -129,11 +129,11 @@ export function StoryViewerModal({ visible, onClose, stories, initialIndex = 0, 
         )}
 
         <Modal visible={showComments} transparent animationType="slide" onRequestClose={() => setShowComments(false)}>
-          <View style={s.cBg}><View style={s.cSheet}>
+          <KeyboardAvoidingView behavior="padding" style={s.cBg}><View style={s.cSheet}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}><Text style={{ fontWeight: '700', fontSize: 16 }}>Comments</Text><TouchableOpacity onPress={() => setShowComments(false)}><Ionicons name="close" size={22} /></TouchableOpacity></View>
             <FlatList data={story.comments || []} keyExtractor={(_, i) => String(i)} renderItem={({ item }) => <Text style={{ paddingVertical: 6 }}><Text style={{ fontWeight: '700' }}>@{item.username} </Text>{item.text}</Text>} />
             <View style={{ flexDirection: 'row', gap: 8 }}><TextInput value={cmtTxt} onChangeText={setCmtTxt} placeholder="Add comment..." style={s.cInp} /><TouchableOpacity onPress={() => addComment(cmtTxt)} style={{ backgroundColor: BRAND, borderRadius: 10, paddingHorizontal: 14, justifyContent: 'center' }}><Text style={{ color: '#fff', fontWeight: '700' }}>Post</Text></TouchableOpacity></View>
-          </View></View>
+          </View></KeyboardAvoidingView>
         </Modal>
 
         <ShareModal visible={showShare} post={story} onClose={() => setShowShare(false)} />
@@ -143,7 +143,7 @@ export function StoryViewerModal({ visible, onClose, stories, initialIndex = 0, 
         <StorySettingsModal visible={showSettings} onClose={() => setShowSettings(false)} uid={uid} me={meData} />
         <StoryActivityModal visible={showActivity} onClose={() => setShowActivity(false)} story={story} allUsers={allUsers} allStories={stories} onOpenSettings={() => { setShowActivity(false); setShowSettings(true); }} onDelete={() => handleMore('delete')} onNewStory={() => setShowNew(true)} onDmUser={() => setShowShare(true)} />
         <StoryCreatorModal visible={showNew} onClose={() => setShowNew(false)} uid={uid} user={meData} me={meData} />
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
