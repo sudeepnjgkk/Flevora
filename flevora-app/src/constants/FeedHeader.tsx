@@ -8,6 +8,7 @@ import { FlevoraLogo } from './FlevoraLogo';
 import { StoryCreatorModal } from './StoryCreatorModal';
 import { StoryViewerModal } from './StoryViewerModal';
 import { NotificationModal } from './NotificationModal';
+import { CreateMenuModal } from './ProfileModals';
 import UploadScreen from '../app/upload';
 
 export { CommentModal } from './CommentModal';
@@ -20,7 +21,8 @@ export function FeedHeader() {
   const [stories, setStories] = useState<any[]>([]);
   const [viewStories, setViewStories] = useState<any[] | null>(null);
   const [creatorOpen, setCreatorOpen] = useState(false);
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [uploadMode, setUploadMode] = useState<'POST' | 'REEL' | 'STORY' | 'LIVE' | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
@@ -65,7 +67,7 @@ export function FeedHeader() {
       <View style={[s.topBar, { borderBottomColor: c.border }]}>
         <FlevoraLogo size={34} showText />
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-          <TouchableOpacity onPress={() => setUploadOpen(true)} hitSlop={8}>
+          <TouchableOpacity onPress={() => setMenuOpen(true)} hitSlop={8}>
             <Ionicons name="add-circle-outline" size={28} color={c.text} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setNotifOpen(true)} hitSlop={8}>
@@ -82,9 +84,7 @@ export function FeedHeader() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[s.storyBar, { borderBottomColor: c.border }]}>
         <View style={s.storyItem}>
           <TouchableOpacity activeOpacity={0.85} onPress={() => (hasMyStory ? setViewStories(myStories) : setCreatorOpen(true))}>
-            <View style={[s.ring, { borderColor
-
-: myRingColor }]}>
+            <View style={[s.ring, { borderColor: myRingColor }]}>
               {myDp ? <Image source={{ uri: myDp }} style={s.avatar} /> : <View style={[s.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={26} color="#fff" /></View>}
             </View>
           </TouchableOpacity>
@@ -109,8 +109,9 @@ export function FeedHeader() {
         })}
       </ScrollView>
 
-      <Modal visible={uploadOpen} animationType="slide" onRequestClose={() => setUploadOpen(false)}>
-        <UploadScreen initialMode="POST" onClose={() => setUploadOpen(false)} />
+      <CreateMenuModal visible={menuOpen} onClose={() => setMenuOpen(false)} c={c} onSelect={(k: string) => setUploadMode(k.toUpperCase() as any)} />
+      <Modal visible={!!uploadMode} animationType="slide" onRequestClose={() => setUploadMode(null)}>
+        <UploadScreen initialMode={uploadMode || 'POST'} onClose={() => setUploadMode(null)} />
       </Modal>
       <StoryCreatorModal visible={creatorOpen} onClose={() => setCreatorOpen(false)} />
       <StoryViewerModal visible={!!viewStories} stories={viewStories || []} onClose={() => setViewStories(null)} onAddStory={() => { setViewStories(null); setCreatorOpen(true); }} />
