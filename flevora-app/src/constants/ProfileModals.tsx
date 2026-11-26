@@ -1,16 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Modal, TouchableOpacity, FlatList, Image, StyleSheet, Share } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../config';
 import { useTheme, BRAND, NEON } from './theme';
 
 const CREATE_ITEMS = [
-  { key: 'reel', label: 'Reel', sub: 'Short vertical video', icon: 'film', color: '#EC4899' },
-  { key: 'post', label: 'Post', sub: 'Photo or video feed post', icon: 'grid', color: '#8B5CF6' },
-  { key: 'story', label: 'Story', sub: '24-hour photo or video', icon: 'add-circle', color: '#3B82F6' },
-  { key: 'edits', label: 'Edits', sub: 'Edit & publish reel', icon: 'cut', color: '#10B981' },
-  { key: 'live', label: 'Live', sub: 'Broadcast to followers', icon: 'radio', color: '#EF4444' },
+  { key: 'post', label: 'Post', sub: 'Share single or multiple photos to your feed', icon: 'images-outline', color: NEON.purple },
+  { key: 'reel', label: 'Reel', sub: 'Upload short vertical video with cover & audio', icon: 'film-outline', color: NEON.pink },
+  { key: 'story', label: 'Story', sub: '24-hour photo or video with text & stickers', icon: 'add-circle-outline', color: '#3B82F6' },
+  { key: 'live', label: 'Live', sub: 'Live stream setup & broadcast check', icon: 'radio-outline', color: '#EF4444' },
 ];
 
 export function CreateMenuModal({ visible, onClose, onSelect, c }: any) {
@@ -24,8 +21,13 @@ export function CreateMenuModal({ visible, onClose, onSelect, c }: any) {
           <Text style={[s.title, { color: th.text }]}>Create</Text>
           {CREATE_ITEMS.map((it) => (
             <TouchableOpacity key={it.key} style={s.row} onPress={() => { onClose(); onSelect?.(it.key); }}>
-              <View style={[s.iconBox, { backgroundColor: `${it.color}22` }]}><Ionicons name={it.icon as any} size={22} color={it.color} /></View>
-              <View style={{ flex: 1 }}><Text style={{ color: th.text, fontWeight: '700', fontSize: 15 }}>{it.label}</Text><Text style={{ color: th.muted, fontSize: 12 }}>{it.sub}</Text></View>
+              <View style={[s.iconBox, { backgroundColor: `${it.color}1E` }]}>
+                <Ionicons name={it.icon as any} size={22} color={it.color} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: th.text, fontWeight: '700', fontSize: 15 }}>{it.label}</Text>
+                <Text style={{ color: th.muted, fontSize: 12 }}>{it.sub}</Text>
+              </View>
               <Ionicons name="chevron-forward" size={18} color={th.muted} />
             </TouchableOpacity>
           ))}
@@ -55,9 +57,9 @@ export function FollowersModal({ visible, onClose, initialTab, user, allUsers, o
           </View>
           <FlatList data={list} keyExtractor={(i) => i.id} ListEmptyComponent={<Text style={{ color: c.muted, textAlign: 'center', padding: 20 }}>No users</Text>} renderItem={({ item }) => (
             <TouchableOpacity style={s.row} onPress={() => { onClose(); onOpenUser?.(item.id); }}>
-              {item.photoUrl || item.
+              {item.photoUrl
 
-avatar ? <Image source={{ uri: item.photoUrl || item.avatar }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={18} color="#fff" /></View>}
+ || item.avatar ? <Image source={{ uri: item.photoUrl || item.avatar }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={18} color="#fff" /></View>}
               <Text style={{ color: c.text, fontWeight: '700', flex: 1 }}>@{item.username}</Text>
             </TouchableOpacity>
           )} />
