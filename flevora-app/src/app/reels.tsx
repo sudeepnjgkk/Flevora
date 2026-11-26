@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Pressable, Image, StyleSheet, Dimensions, Alert } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Pressable, Image, StyleSheet, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -12,7 +12,7 @@ import { BRAND, NEON } from '../constants/theme';
 
 const H = Dimensions.get('window').height - 56;
 
-function ReelItem({ item, active, focused, me, owner, autoScroll, onNextReel, onComment, onShare, onLikes, onRepostToast }: any) {
+function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoScroll, onNextReel, onComment, onShare, onLikes, onRepostToast }: any) {
   const router = useRouter();
   const uid = auth.currentUser?.uid || '';
   const [paused, setPaused] = useState(false);
@@ -157,7 +157,9 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onNextReel, on
           <View style={s.bottomInfo} pointerEvents="box-none">
             {reposted && (
               <TouchableOpacity onPress={() => setThoughtOpen(true)} style={s.thoughtTrigger}>
-                <View style={s.thoughtPill}><Text style={{ color: '#111', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{myThought || 'Tag a friend...'}</Text></View>
+                <View style={s.thoughtPill}><Text style={{ color: '#111', fontSize: 12, fontWeight: '700' }} numberOfLines
+
+={1}>{myThought || 'Tag a friend...'}</Text></View>
                 {myAv ? <Image source={{ uri: myAv }} style={s.thoughtMiniAv} /> : <View style={[s.thoughtMiniAv, { backgroundColor: BRAND }]} />}
               </TouchableOpacity>
             )}
@@ -187,7 +189,7 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onNextReel, on
       )}
 
       <RepostThoughtModal visible={thoughtOpen} avatar={myAv} initialText={myThought} onSave={saveThought} onDelete={deleteRepost} onClose={() => setThoughtOpen(false)} />
-      <ReelOptionsSheet visible={optOpen} onClose={() => setOptOpen(false)} fullscreen={fullscreen} onToggleFullscreen={() => setFullscreen((f) => !f)} speed={speed} onChangeSpeed={(sp: number) => { setSpeed(sp); setSpeedLocked(sp !== 1); }} autoScroll={autoScroll} onToggleAutoScroll={() => {}} captions={captions} onToggleCaptions={() => setCaptions((c) => !c)} onInterest={(ok: boolean) => { if (!ok) onNextReel?.(); }} />
+      <ReelOptionsSheet visible={optOpen} onClose={() => setOptOpen(false)} fullscreen={fullscreen} onToggleFullscreen={() => setFullscreen((f) => !f)} speed={speed} onChangeSpeed={(sp: number) => { setSpeed(sp); setSpeedLocked(sp !== 1); }} autoScroll={autoScroll} onToggleAutoScroll={onToggleAutoScroll} captions={captions} onToggleCaptions={() => setCaptions((c) => !c)} onInterest={(ok: boolean) => { if (!ok) onNextReel?.(); }} />
     </View>
   );
 }
@@ -197,6 +199,7 @@ export default function ReelsScreen() {
   const uid = auth.currentUser?.uid || '';
   const listRef = useRef<FlatList>(null);
   const [focused, setFocused] = useState(true);
+  const [autoScroll, setAutoScroll] = useState(false);
   const [feedTab, setFeedTab] = useState<'forYou' | 'following'>('forYou');
   const [reels, setReels] = useState<any[]>([]);
   const [me, setMe] = useState<any>(null);
@@ -245,7 +248,7 @@ export default function ReelsScreen() {
         ))}
       </View>
       <FlatList ref={listRef} data={shownReels} pagingEnabled windowSize={3} maxToRenderPerBatch={2} showsVerticalScrollIndicator={false} keyExtractor={(i) => i.id} onViewableItemsChanged={onView} viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
-        renderItem={({ item }) => <ReelItem item={item} active={item.id === activeId} focused={focused} me={me} owner={usersMap[item.uid]} autoScroll={false} onNextReel={() => goNext(item.id)} onComment={() => setCommentPost(item)} onShare={() => setShareReel(item)} onLikes={() => setLikesPost(item)} onRepostToast={showRepostToast} />}
+        renderItem={({ item }) => <ReelItem item={item} active={item.id === activeId} focused={focused} me={me} owner={usersMap[item.uid]} autoScroll={autoScroll} onToggleAutoScroll={() => setAutoScroll((v) => !v)} onNextReel={() => goNext(item.id)} onComment={() => setCommentPost(item)} onShare={() => setShareReel(item)} onLikes={() => setLikesPost(item)} onRepostToast={showRepostToast} />}
         ListEmptyComponent={<View style={s.empty}><Ionicons name="videocam-outline" size={48} color="#666" /><Text style={{ color: '#888', marginTop: 10 }}>No reels yet</Text></View>}
       />
       {!!toastReelId && (
@@ -283,4 +286,4 @@ const s = StyleSheet.create({
   toast: { position: 'absolute', left: 12, right: 12, bottom: 12, backgroundColor: '#262626', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 50, elevation: 50 },
   empty: { height: H, justifyContent: 'center', alignItems: 'center' },
 });
-                
+      
