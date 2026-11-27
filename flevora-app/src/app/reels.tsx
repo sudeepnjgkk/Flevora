@@ -3,12 +3,14 @@ import { View, Text, FlatList, TouchableOpacity, Pressable, Image, StyleSheet, D
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, addDoc, deleteField, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, deleteField } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { CommentModal } from '../constants/CommentModal';
 import { ShareModal } from '../constants/ShareModal';
 import { LikesPlaysModal, RepostThoughtModal, ReelOptionsSheet } from '../constants/ReelModals';
 import { BRAND, NEON } from '../constants/theme';
+import { AnimatedLikeButton } from '../constants/LikeComponents';
+import { formatLikeCount, togglePostLike } from '../constants/likeSystem';
 
 const H = Dimensions.get('window').height - 56;
 
@@ -17,6 +19,7 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
   const uid = auth.currentUser?.uid || '';
   const [paused, setPaused] = useState(false);
   const [liked, setLiked] = useState(Array.isArray(item.likes) && item.likes.includes(uid));
+  const [likeCount, setLikeCount] = useState(Array.isArray(item.likes) ? item.likes.length : 0);
   const [reposted, setReposted] = useState(Array.isArray(item.reposts) && item.reposts.includes(uid));
   const [repostCount, setRepostCount] = useState(Array.isArray(item.reposts) ? item.reposts.length : 0);
   const [thoughtOpen, setThoughtOpen] = useState(false);
@@ -39,6 +42,7 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
 
   useEffect(() => {
     setLiked(Array.isArray(item.likes) && item.likes.includes(uid));
+    setLikeCount(Array.isArray(item.likes) ? item.likes.length : 0);
     setReposted(Array.isArray(item.reposts) && item.reposts.includes(uid));
     setRepostCount(Array.isArray(item.reposts) ? item.reposts.length : 0);
   }, [item.likes, item.reposts, uid]);
@@ -62,18 +66,27 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
   const myAv = me?.photoUrl || me?.avatar || '';
   const ownerAv = owner?.photoUrl || owner?.avatar || item.avatar || '';
 
-  const toggleLike = async (forceLike = false) => {
-    if (!uid) return;
-    if (forceLike && liked) { setHeartPop(true); setTimeout(() => setHeartPop(false), 650); return; }
-    const next = forceLike ? true : !liked;
-    setLiked(next);
-    if (next) { setHeartPop(true); setTimeout(() => setHeartPop(false), 650); }
-    try {
-      await updateDoc(doc(db, 'posts', item.id), { likes: next ? arrayUnion(uid) : arrayRemove(uid) });
-      if (next && item.uid && item.uid !== uid) {
-        addDoc(collection(db, 'notifications'), { toUid: item.uid, fromUid: uid, fromUsername: me?.username || 'user', type: 'like', postId: item.id, message: 'liked your reel', read: false, createdAt: serverTimestamp() }).catch(() => {});
-      }
-    } catch { setLiked(!next); }
+  const triggerLike = (forceLike = false) => {
+    if (forceLike) {
+      setHeartPop(true);
+      setTimeout(() => setHeartPop(false), 650);
+    }
+    const prevCount = likeCount;
+    togglePostLike({
+      post: { ...item, likes: liked ? [uid] : [] },
+      myUid: uid,
+      me,
+      targetUser: owner,
+      forceLike,
+      onOptimistic: (nextLiked) => {
+        setLiked(nextLiked);
+        setLikeCount(Math.max(0, prevCount + (nextLiked ? 1 : -1)));
+      },
+      onRollback: (wasLiked) => {
+        setLiked(wasLiked);
+        setLikeCount(prevCount);
+      },
+    });
   };
 
   const handleCenterPress = () => {
@@ -81,7 +94,7 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
     if (now - lastTap.current < 280) {
       if (tapTimer.current) clearTimeout(tapTimer.current);
       lastTap.current = 0;
-      toggleLike(true);
+      triggerLike(true);
     } else {
       lastTap.current = now;
       tapTimer.current = setTimeout(() => setPaused((p) => !p), 270);
@@ -134,8 +147,7 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
     await updateDoc(doc(db, 'users', uid), { following: following ? arrayRemove(item.uid) : arrayUnion(item.uid) }).catch(() => {});
     await updateDoc(doc(db, 'users', item.uid), { followers: following ? arrayRemove(uid) : arrayUnion(uid) }).catch(() => {});
   };
-
-  return (
+    return (
     <View style={s.reel}>
       <VideoView player={player} style={StyleSheet.absoluteFill} surfaceType="textureView" nativeControls={false} contentFit="cover" />
       <Pressable onPress={handleCenterPress} onLongPress={() => setOptOpen(true)} delayLongPress={400} style={[StyleSheet.absoluteFill, { zIndex: 1 }]} />
@@ -143,7 +155,7 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
       <View onTouchStart={onEdgeStart} onTouchMove={onEdgeMove} onTouchEnd={onEdgeEnd} style={[s.edgeZone, { right: 0, bottom: 320 }]} />
 
       {paused && <Ionicons name="play" size={56} color="rgba(255,255,255,0.85)" style={s.centerIcon} pointerEvents="none" />}
-      {heartPop && <Ionicons name="heart" size={86} color={NEON.pink} style={s.centerIcon} pointerEvents="none" />}
+      {heartPop && <Ionicons name="heart" size={86} color="#EF4444" style={s.centerIcon} pointerEvents="none" />}
       {!!holdHint && <View style={s.hintPill}><Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{holdHint}</Text></View>}
       {speedLocked && !holdHint && (
         <TouchableOpacity onPress={() => { setSpeed(1); setSpeedLocked(false); }} style={s.hintPill}>
@@ -157,9 +169,7 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
           <View style={s.bottomInfo} pointerEvents="box-none">
             {reposted && (
               <TouchableOpacity onPress={() => setThoughtOpen(true)} style={s.thoughtTrigger}>
-                <View style={s.thoughtPill}><Text style={{ color: '#111', fontSize: 12, fontWeight: '700' }} numberOfLines
-
-={1}>{myThought || 'Tag a friend...'}</Text></View>
+                <View style={s.thoughtPill}><Text style={{ color: '#111', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{myThought || 'Tag a friend...'}</Text></View>
                 {myAv ? <Image source={{ uri: myAv }} style={s.thoughtMiniAv} /> : <View style={[s.thoughtMiniAv, { backgroundColor: BRAND }]} />}
               </TouchableOpacity>
             )}
@@ -176,8 +186,8 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
 
           <View style={s.rightCol}>
             <View style={s.actBtn}>
-              <TouchableOpacity onPress={() => toggleLike(false)} hitSlop={10}><Ionicons name={liked ? 'heart' : 'heart-outline'} size={30} color={liked ? NEON.pink : '#fff'} /></TouchableOpacity>
-              <TouchableOpacity onPress={onLikes} hitSlop={8}><Text style={s.actTxt}>Likes</Text></TouchableOpacity>
+              <AnimatedLikeButton liked={liked} onPress={() => triggerLike(false)} size={30} inactiveColor="#fff" />
+              <TouchableOpacity onPress={onLikes} hitSlop={8}><Text style={s.actTxt}>{formatLikeCount(likeCount)}</Text></TouchableOpacity>
             </View>
             <TouchableOpacity onPress={onComment} style={s.actBtn} hitSlop={8}><Ionicons name="chatbubble-outline" size={28} color="#fff" /><Text style={s.actTxt}>{item.commentsCount || 0}</Text></TouchableOpacity>
             <TouchableOpacity onPress={toggleRepost} style={s.actBtn} hitSlop={8}><Ionicons name="repeat" size={29} color={reposted ? BRAND : '#fff'} /><Text style={s.actTxt}>{repostCount}</Text></TouchableOpacity>
@@ -286,4 +296,4 @@ const s = StyleSheet.create({
   toast: { position: 'absolute', left: 12, right: 12, bottom: 12, backgroundColor: '#262626', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 50, elevation: 50 },
   empty: { height: H, justifyContent: 'center', alignItems: 'center' },
 });
-      
+                                                               
