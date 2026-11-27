@@ -25,9 +25,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
@@ -61,3 +58,4 @@ jobs:
         with:
           name: flevora-apk
           path: flevora-app/android/app/build/outputs/apk/release/flevora-release.apk
+          
