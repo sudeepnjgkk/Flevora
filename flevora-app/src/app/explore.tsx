@@ -28,11 +28,8 @@ export default function ExploreScreen() {
   const [submittedQuery, setSubmittedQuery] = useState(params.q || '');
   const [isFocused, setIsFocused] = useState(false);
   const [activeTab, setActiveTab] = useState<SearchTab>('top');
-
-  // Recent searches (private per user)
   const [history, setHistory] = useState<string[]>([]);
 
-  // Explore grid state + pagination
   const [explorePosts, setExplorePosts] = useState<any[]>([]);
   const [exploreCursor, setExploreCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [exploreHasMore, setExploreHasMore] = useState(true);
@@ -41,17 +38,13 @@ export default function ExploreScreen() {
   const [exploreError, setExploreError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // User cache for privacy/blocking & author display
   const [userCache, setUserCache] = useState<Record<string, any>>({});
-
-  // Search results & suggestions
   const [suggestUsers, setSuggestUsers] = useState<any[]>([]);
   const [searchUsers, setSearchUsers] = useState<any[]>([]);
   const [searchReels, setSearchReels] = useState<any[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Dedicated Hashtag / Place drill-down
   const [drillMode, setDrillMode] = useState<{ type: 'tag' | 'place'; value: string } | null>(null);
   const [drillPosts, setDrillPosts] = useState<any[]>([]);
   const [drillCursor, setDrillCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
@@ -59,7 +52,6 @@ export default function ExploreScreen() {
   const [drillLoading, setDrillLoading] = useState(false);
   const [drillError, setDrillError] = useState<string | null>(null);
 
-  // Selected post/reel modal
   const [selectedPost, setSelectedPost] = useState<any | null>(null);
   const reqIdRef = useRef(0);
 
@@ -111,13 +103,11 @@ export default function ExploreScreen() {
       setExploreCursor(page.lastDoc);
       setExploreHasMore(page.hasMore);
     } catch {
-      // Silent pagination retry on next scroll
     } finally {
       setExploreMoreLoading(false);
     }
   };
 
-  // Debounced live suggestions (300ms) with stale-request cancellation
   useEffect(() => {
     const clean = queryText.trim();
     if (!clean || submittedQuery === clean) {
@@ -133,9 +123,7 @@ export default function ExploreScreen() {
         users.forEach((u) => { uMap[u.id] = u; });
         setUserCache((prev) => ({ ...prev, ...uMap }));
         setSuggestUsers(users.filter((u) => canViewAccount(u, me, myUid)).slice(0, 6));
-      } catch {
-        // Keep UI clean on suggestion failure
-      }
+      } catch {}
     }, 300);
     return () => clearTimeout(timer);
   }, [queryText, submittedQuery, me, myUid]);
@@ -206,17 +194,12 @@ export default function ExploreScreen() {
     setDrillPosts(filtered);
   };
 
-  // Authorized Explore posts (privacy + blocking + deleted filter)
   const authorizedExplorePosts = useMemo(
     () => explorePosts.filter((p) => canViewPost(p, userCache[p.uid], me, myUid)),
     [explorePosts, userCache, me, myUid]
   );
-
-  // Trending hashtags & Places derived strictly from real posts
   const trendingTags = useMemo(() => extractRealHashtags(authorizedExplorePosts).slice(0, 10), [authorizedExplorePosts]);
   const allPlaces = useMemo(() => extractRealPlaces(authorizedExplorePosts), [authorizedExplorePosts]);
-
-  // Suggested creators (excludes self, blocked, already followed)
   const suggestedCreators = useMemo(() => {
     const following: string[] = Array.isArray(me?.following) ? me.following : [];
     return Object.values(userCache)
@@ -224,7 +207,6 @@ export default function ExploreScreen() {
       .slice(0, 12);
   }, [userCache, me, myUid]);
 
-  // Filtered Search Results per tab
   const qLower = submittedQuery.trim().toLowerCase();
   const matchedAccounts = useMemo(() => searchUsers.filter((u) => canViewAccount(u, me, myUid)), [searchUsers, me, myUid]);
   const matchedPosts = useMemo(
@@ -265,9 +247,7 @@ export default function ExploreScreen() {
     setDrillMode(null);
     setSearchError(null);
   };
-
-  // 1. Dedicated Hashtag / Place Drill-Down Screen
-  if (drillMode) {
+    if (drillMode) {
     const safeDrillPosts = drillPosts.filter((p) => canViewPost(p, userCache[p.uid], me, myUid));
     return (
       <View style={[styles.container, { backgroundColor: c.background }]}>
@@ -297,9 +277,7 @@ export default function ExploreScreen() {
             onEndReached={loadMoreHashtag}
             onEndReachedThreshold={0.4}
             ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No public posts found for {drillMode.value}.</Text>}
-            renderItem={({ item }) => (
-              <ExploreTile item={item} onPress={() => setSelectedPost(item)} />
-            )}
+            renderItem={({ item }) => <ExploreTile item={item} onPress={() => setSelectedPost(item)} />}
           />
         )}
         <ExplorePostModal
@@ -318,7 +296,6 @@ export default function ExploreScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
-      {/* Search Bar */}
       <View style={styles.searchBarRow}>
         {(isFocused || !!submittedQuery) && (
           <TouchableOpacity onPress={() => { setIsFocused(false); clearAllInput(); Keyboard.dismiss(); }} style={{ paddingRight: 8 }}>
@@ -346,7 +323,6 @@ export default function ExploreScreen() {
         </View>
       </View>
 
-      {/* Live Suggestions Panel */}
       {showSuggestions ? (
         <ScrollView keyboardShouldPersistTaps="handled" style={{ flex: 1 }}>
           {!queryText.trim() && history.length > 0 && (
@@ -411,7 +387,6 @@ export default function ExploreScreen() {
           )}
         </ScrollView>
       ) : submittedQuery ? (
-        /* Submitted Search Results + Category Tabs */
         <View style={{ flex: 1 }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tabBar, { borderBottomColor: c.border }]} contentContainerStyle={{ paddingHorizontal: 12, gap: 18 }}>
             {tabs.map((t) => {
@@ -439,9 +414,168 @@ export default function ExploreScreen() {
               keyExtractor={(u) => u.id}
               ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No accounts found for "{submittedQuery}".</Text>}
               renderItem={({ item }) => (
-                <AccountRow
-                  user={item}
-                  me={me}
-                  myUid={myUid}
-                  onPressProfile={() => router.navigate(`/user/${item.id}` as any)}
-                  onToggleFollow={() => toggleF
+                <AccountRow user={item} me={me} myUid={myUid} onPressProfile={() => router.navigate(`/user/${item.id}` as any)} onToggleFollow={() => toggleFollowUser(item, me, myUid)} />
+              )}
+            />
+          ) : activeTab === 'posts' ? (
+            <FlatList
+              data={matchedPosts}
+              numColumns={3}
+              keyExtractor={(i) => i.id}
+              ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No posts found for "{submittedQuery}".</Text>}
+              renderItem={({ item }) => <ExploreTile item={item} onPress={() => setSelectedPost(item)} />}
+            />
+          ) : activeTab === 'reels' ? (
+            <FlatList
+              data={matchedReels}
+              numColumns={3}
+              keyExtractor={(i) => i.id}
+              ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No reels found for "{submittedQuery}".</Text>}
+              renderItem={({ item }) => <ExploreTile item={item} tall onPress={() => setSelectedPost(item)} />}
+            />
+          ) : activeTab === 'tags' ? (
+            <FlatList
+              data={matchedTags}
+              keyExtractor={(i) => i.tag}
+              ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No hashtags found for "{submittedQuery}".</Text>}
+              renderItem={({ item }) => (
+                <TouchableOpacity style={styles.sugRow} onPress={() => openHashtagView(item.tag)}>
+                  <View style={styles.sugLeft}>
+                    <View style={[styles.hashIcon, { borderColor: c.border }]}><Text style={{ color: c.text, fontWeight: '800' }}>#</Text></View>
+                    <View>
+                      <Text style={{ color: c.text, fontWeight: '700', fontSize: 14 }}>{item.tag}</Text>
+                      <Text style={{ color: c.muted, fontSize: 12 }}>{item.count} posts</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
+          ) : activeTab === 'places' ? (
+            <FlatList
+              data={matchedPlaces}
+              keyExtractor={(i) => i.place}
+              ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No places found for "{submittedQuery}".</Text>}
+              renderItem={({ item }) => (
+                <TouchableOpacity style={styles.sugRow} onPress={() => openPlaceView(item.place)}>
+                  <View style={styles.sugLeft}>
+                    <Ionicons name="location-outline" size={22} color={BRAND} />
+                    <View>
+                      <Text style={{ color: c.text, fontWeight: '700', fontSize: 14 }}>{item.place}</Text>
+                      <Text style={{ color: c.muted, fontSize: 12 }}>{item.count} posts</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
+          ) : (
+            <FlatList
+              data={matchedPosts}
+              numColumns={3}
+              keyExtractor={(i) => i.id}
+              ListHeaderComponent={
+                <View>
+                  {matchedAccounts.slice(0, 4).map((u) => (
+                    <AccountRow key={u.id} user={u} me={me} myUid={myUid} onPressProfile={() => router.navigate(`/user/${u.id}` as any)} onToggleFollow={() => toggleFollowUser(u, me, myUid)} />
+                  ))}
+                  {matchedTags.slice(0, 2).map((t) => (
+                    <TouchableOpacity key={t.tag} style={styles.sugRow} onPress={() => openHashtagView(t.tag)}>
+                      <View style={styles.sugLeft}>
+                        <View style={[styles.hashIcon, { borderColor: c.border }]}><Text style={{ color: c.text, fontWeight: '800' }}>#</Text></View>
+                        <Text style={{ color: c.text, fontWeight: '700' }}>{t.tag} ({t.count})</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              }
+              ListEmptyComponent={matchedAccounts.length === 0 && matchedTags.length === 0 ? <Text style={[styles.emptyTxt, { color: c.muted }]}>No results found for "{submittedQuery}".</Text> : null}
+              renderItem={({ item }) => <ExploreTile item={item} onPress={() => setSelectedPost(item)} />}
+            />
+          )}
+        </View>
+      ) : exploreLoading ? (
+        <ExploreSkeleton />
+      ) : exploreError ? (
+        <View style={styles.center}>
+          <Text style={{ color: c.muted, marginBottom: 10 }}>{exploreError}</Text>
+          <TouchableOpacity onPress={loadInitialExplore} style={[styles.retryBtn, { backgroundColor: BRAND }]}>
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <FlatList
+          data={authorizedExplorePosts}
+          numColumns={3}
+          keyExtractor={(i) => i.id}
+          onEndReached={loadMoreExplore}
+          onEndReachedThreshold={0.4}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadInitialExplore(); }} tintColor={BRAND} />}
+          ListHeaderComponent={
+            <View style={{ paddingBottom: 8 }}>
+              {trendingTags.length > 0 && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingVertical: 8 }}>
+                  {trendingTags.map((t) => (
+                    <TouchableOpacity key={t.tag} onPress={() => openHashtagView(t.tag)} style={[styles.chip, { backgroundColor: c.input, borderColor: c.border }]}>
+                      <Text style={{ color: c.text, fontWeight: '700', fontSize: 12 }}>{t.tag}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+              {suggestedCreators.length > 0 && (
+                <View style={{ marginBottom: 6 }}>
+                  <Text style={[styles.subTitle, { color: c.muted }]}>Suggested for you</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 10 }}>
+                    {suggestedCreators.map((u) => (
+                      <TouchableOpacity key={u.id} style={[styles.creatorCard, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => router.navigate(`/user/${u.id}` as any)}>
+                        {u.avatar ? <Image source={{ uri: u.avatar }} style={styles.creatorAv} /> : (
+                          <View style={[styles.creatorAv, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
+                            <Text style={{ color: '#fff', fontWeight: '700' }}>{(u.username || 'U')[0].toUpperCase()}</Text>
+                          </View>
+                        )}
+                        <Text style={{ color: c.text, fontWeight: '700', fontSize: 12 }} numberOfLines={1}>@{u.username}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+          }
+          ListFooterComponent={exploreMoreLoading ? <ActivityIndicator style={{ marginVertical: 14 }} color={BRAND} /> : null}
+          ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No public posts to explore yet.</Text>}
+          renderItem={({ item }) => <ExploreTile item={item} onPress={() => setSelectedPost(item)} />}
+        />
+      )}
+
+      <ExplorePostModal
+        post={selectedPost}
+        author={selectedPost ? userCache[selectedPost.uid] : null}
+        me={me}
+        onClose={() => setSelectedPost(null)}
+        onPressTag={openHashtagView}
+        onPressPlace={openPlaceView}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, paddingTop: 46 },
+  searchBarRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 8 },
+  searchBox: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, gap: 8, height: 42 },
+  input: { flex: 1, fontSize: 14, paddingVertical: 0 },
+  tabBar: { maxHeight: 42, borderBottomWidth: 1 },
+  tabItem: { paddingVertical: 10, paddingHorizontal: 4 },
+  secHead: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 14, paddingBottom: 6 },
+  sugRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 10 },
+  sugLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  sugAv: { width: 38, height: 38, borderRadius: 19 },
+  hashIcon: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
+  subTitle: { fontSize: 12, fontWeight: '700', paddingHorizontal: 14, marginBottom: 6 },
+  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1 },
+  creatorCard: { width: 92, padding: 10, borderRadius: 12, borderWidth: 1, alignItems: 'center', gap: 6 },
+  creatorAv: { width: 44, height: 44, borderRadius: 22 },
+  drillHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingBottom: 10, borderBottomWidth: 1 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  retryBtn: { paddingHorizontal: 18, paddingVertical: 9, borderRadius: 8 },
+  emptyTxt: { textAlign: 'center', marginTop: 40, fontSize: 14 },
+});
+                                                   
