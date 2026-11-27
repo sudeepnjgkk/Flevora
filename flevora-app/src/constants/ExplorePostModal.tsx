@@ -1,37 +1,39 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, Modal, TouchableOpacity, Image, ScrollView, StyleSheet, Dimensions, Alert,
+  View, Text, Modal, TouchableOpacity, Image, ScrollView, StyleSheet, Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useRouter } from 'expo-router';
-import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { auth, db } from '../config';
-import { useTheme, BRAND } from './theme';
+import { useTheme, BRAND, BRAND_TEXT } from './theme';
 import { CommentModal } from './CommentModal';
 import { ShareModal } from './ShareModal';
 import { canViewPost, toggleFollowUser } from './searchHelpers';
+import { AnimatedLikeButton, DoubleTapHeartOverlay } from './LikeComponents';
+import { formatLikesLabel, togglePostLike } from './likeSystem';
 
 const W = Dimensions.get('window').width;
 
-function ModalVideo({ uri }: { uri: string }) {
+function ModalVideo({ uri, onDoubleTap }: { uri: string; onDoubleTap: () => void }) {
   const [paused, setPaused] = useState(false);
-  const player = useVideoPlayer(uri, (p) => {
-    p.loop = true;
-    p.play();
-  });
+  const player = useVideoPlayer(uri, (p) => { p.loop = true; p.play(); });
   return (
-    <TouchableOpacity activeOpacity={0.95} onPress={() => {
-      if (paused) { player.play(); setPaused(false); }
-      else { player.pause(); setPaused(true); }
-    }}>
+    <DoubleTapHeartOverlay
+      onDoubleTap={onDoubleTap}
+      onSingleTap={() => {
+        if (paused) { player.play(); setPaused(false); }
+        else { player.pause(); setPaused(true); }
+      }}
+    >
       <VideoView player={player} style={styles.media} nativeControls={false} contentFit="cover" />
       {paused && (
         <View style={styles.playOverlay}>
           <Ionicons name="play" size={44} color="#fff" />
         </View>
       )}
-    </TouchableOpacity>
+    </DoubleTapHeartOverlay>
   );
 }
 
@@ -54,7 +56,6 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
   const [sharePost, setSharePost] = useState<any | null>(null);
 
-  // Result open hote waqt latest visibility & deleted status re-validate karna
   useEffect(() => {
     if (!post) { setLivePost(null); setBlockedMsg(null); return; }
     setLivePost(post);
@@ -76,9 +77,7 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
         }
         setLivePost(pData);
         setLiveAuthor(aData);
-      } catch {
-        // Offline fallback: keep initial state if allowed
-      }
+      } catch {}
     })();
     return () => { active = false; };
   }, [post?.id]);
@@ -91,17 +90,20 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
   const isFollowing = Array.isArray(me?.following) && me.following.includes(p.uid);
   const mediaList: string[] = Array.isArray(p.media) && p.media.length > 0 ? p.media : (p.mediaUrl ? [p.mediaUrl] : []);
 
-  const handleLike = async () => {
-    if (!myUid) return;
-    const nextLikes = liked ? p.likes.filter((x: string) => x !== myUid) : [...(p.likes || []), myUid];
-    setLivePost({ ...p, likes: nextLikes });
-    await updateDoc(doc(db, 'posts', p.id), { likes: liked ? arrayRemove(myUid) : arrayUnion(myUid) }).catch(() => {});
-    if (!liked && p.uid !== myUid) {
-      await addDoc(collection(db, 'notifications'), {
-        toUid: p.uid, fromUid: myUid, fromUsername: me?.username || 'user',
-        type: 'like', postId: p.id, message: 'liked your post.', read: false, createdAt: serverTimestamp(),
-      }).catch(() => {});
-    }
+  const triggerLike = (forceLike = false) => {
+    const prevLikes: string[] = Array.isArray(p.likes) ? p.likes : [];
+    togglePostLike({
+      post: p,
+      myUid,
+      me,
+      targetUser: liveAuthor,
+      forceLike,
+      onOptimistic: (nextLiked) => {
+        const nextLikes = nextLiked ? Array.from(new Set([...prevLikes, myUid])) : prevLikes.filter((x) => x !== myUid);
+        setLivePost({ ...p, likes: nextLikes });
+      },
+      onRollback: () => setLivePost({ ...p, likes: prevLikes }),
+    });
   };
 
   const handleSave = async () => {
@@ -134,7 +136,7 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
           <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
             <Ionicons name="arrow-back" size={24} color={c.text} />
           </TouchableOpacity>
-          <Text style={[styles.topTitle, { color: c.text }]}>{p.mediaType === 'video' ? 'Reel' : 'Explore Post'}</Text>
+          <Text style={[styles.topTitle, { color: c.text }]}>{p.mediaType === 'video' ? 'Reel' : 'Post'}</Text>
           <View style={{ width: 32 }} />
         </View>
 
@@ -146,15 +148,12 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
         ) : (
           <ScrollView>
             <View style={styles.authorRow}>
-              <TouchableOpacity
-                style={styles.authorLeft}
-                onPress={() => { onClose(); router.navigate(`/user/${p.uid}` as any); }}
-              >
+              <TouchableOpacity style={styles.authorLeft} onPress={() => { onClose(); router.navigate(`/user/${p.uid}` as any); }}>
                 {liveAuthor?.avatar || p.userAvatar ? (
                   <Image source={{ uri: liveAuthor?.avatar || p.userAvatar }} style={styles.av} />
                 ) : (
                   <View style={[styles.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{(p.username || 'U')[0].toUpperCase()}</Text>
+                    <Text style={{ color: BRAND_TEXT, fontWeight: '700' }}>{(p.username || 'U')[0].toUpperCase()}</Text>
                   </View>
                 )}
                 <View>
@@ -170,11 +169,8 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
                 </View>
               </TouchableOpacity>
               {p.uid !== myUid && liveAuthor && (
-                <TouchableOpacity
-                  onPress={() => toggleFollowUser(liveAuthor, me, myUid)}
-                  style={[styles.followBtn, { backgroundColor: isFollowing ? c.input : BRAND }]}
-                >
-                  <Text style={{ color: isFollowing ? c.text : '#fff', fontWeight: '700', fontSize: 12 }}>
+                <TouchableOpacity onPress={() => toggleFollowUser(liveAuthor, me, myUid)} style={[styles.followBtn, { backgroundColor: isFollowing ? c.input : BRAND }]}>
+                  <Text style={{ color: isFollowing ? c.text : BRAND_TEXT, fontWeight: '700', fontSize: 12 }}>
                     {isFollowing ? 'Following' : 'Follow'}
                   </Text>
                 </TouchableOpacity>
@@ -182,15 +178,19 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
             </View>
 
             {p.mediaType === 'video' && mediaList[0] ? (
-              <ModalVideo uri={mediaList[0]} />
+              <ModalVideo uri={mediaList[0]} onDoubleTap={() => triggerLike(true)} />
             ) : mediaList.length > 1 ? (
               <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
                 {mediaList.map((uri, i) => (
-                  <Image key={i} source={{ uri }} style={styles.media} resizeMode="cover" />
+                  <DoubleTapHeartOverlay key={i} onDoubleTap={() => triggerLike(true)}>
+                    <Image source={{ uri }} style={styles.media} resizeMode="cover" />
+                  </DoubleTapHeartOverlay>
                 ))}
               </ScrollView>
             ) : mediaList[0] ? (
-              <Image source={{ uri: mediaList[0] }} style={styles.media} resizeMode="cover" />
+              <DoubleTapHeartOverlay onDoubleTap={() => triggerLike(true)}>
+                <Image source={{ uri: mediaList[0] }} style={styles.media} resizeMode="cover" />
+              </DoubleTapHeartOverlay>
             ) : (
               <View style={[styles.media, { backgroundColor: c.input, justifyContent: 'center', alignItems: 'center' }]}>
                 <Ionicons name="image-outline" size={40} color={c.muted} />
@@ -199,9 +199,7 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
 
             <View style={styles.actions}>
               <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>
-                <TouchableOpacity onPress={handleLike}>
-                  <Ionicons name={liked ? 'heart' : 'heart-outline'} size={26} color={liked ? '#EF4444' : c.text} />
-                </TouchableOpacity>
+                <AnimatedLikeButton liked={liked} onPress={() => triggerLike(false)} />
                 <TouchableOpacity onPress={() => setCommentPostId(p.id)}>
                   <Ionicons name="chatbubble-outline" size={24} color={c.text} />
                 </TouchableOpacity>
@@ -215,8 +213,8 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
                     onPress={() => { onClose(); router.navigate({ pathname: '/reels', params: { postId: p.id } } as any); }}
                     style={[styles.reelJump, { backgroundColor: BRAND }]}
                   >
-                    <Ionicons name="play" size={13} color="#fff" />
-                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Reels</Text>
+                    <Ionicons name="play" size={13} color={BRAND_TEXT} />
+                    <Text style={{ color: BRAND_TEXT, fontSize: 12, fontWeight: '700' }}>Reels</Text>
                   </TouchableOpacity>
                 )}
                 <TouchableOpacity onPress={handleSave}>
@@ -227,7 +225,7 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
 
             <View style={{ paddingHorizontal: 14, paddingBottom: 24, gap: 6 }}>
               <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>
-                {Array.isArray(p.likes) ? p.likes.length : 0} likes
+                {formatLikesLabel(Array.isArray(p.likes) ? p.likes.length : 0)}
               </Text>
               {!!p.caption && renderCaptionWithTags(p.caption)}
             </View>
