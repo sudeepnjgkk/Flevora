@@ -7,10 +7,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { doc, onSnapshot, deleteDoc, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { auth, db } from '../config';
-import { useTheme, BRAND } from '../constants/theme';
+import { useTheme, BRAND, BRAND_TEXT } from '../constants/theme';
 import { ExplorePostModal } from '../constants/ExplorePostModal';
 import { getThumbUrl } from '../constants/searchHelpers';
 import { fetchPostsByIds, fetchTaggedPostsPage, fetchUserPostsPage } from '../constants/profileHelpers';
+import { fetchUserRepostsPage } from '../constants/repostSystem';
 import { EditProfileModal, FollowListModal, HighlightModal, ProfessionalModal, shareProfileLink } from '../constants/ProfileSubModals';
 import { ProfileSettingsModal } from '../constants/ProfileSettingsModal';
 import UploadScreen from './upload';
@@ -27,9 +28,10 @@ export default function ProfileScreen() {
   const [postsCursor, setPostsCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [postsHasMore, setPostsHasMore] = useState(false);
 
+  const [repostPosts, setRepostPosts] = useState<any[]>([]);
   const [savedPosts, setSavedPosts] = useState<any[]>([]);
   const [taggedPosts, setTaggedPosts] = useState<any[]>([]);
-  const [tab, setTab] = useState<'posts' | 'reels' | 'saved' | 'tagged'>('posts');
+  const [tab, setTab] = useState<'posts' | 'reels' | 'reposts' | 'saved' | 'tagged'>('posts');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -69,8 +71,10 @@ export default function ProfileScreen() {
       fetchPostsByIds(user.savedPosts).then(setSavedPosts);
     } else if (tab === 'tagged' && user?.username) {
       fetchTaggedPostsPage(user.username.toLowerCase(), null, 18).then((r) => setTaggedPosts(r.items));
+    } else if (tab === 'reposts' && uid) {
+      fetchUserRepostsPage(uid, null, 18).then((r) => setRepostPosts(r.items)).catch(() => {});
     }
-  }, [tab, user?.savedPosts, user?.username]);
+  }, [tab, user?.savedPosts, user?.username, uid, selectedPost]);
 
   const loadMorePosts = async () => {
     if ((tab !== 'posts' && tab !== 'reels') || !postsHasMore || !postsCursor) return;
@@ -100,6 +104,7 @@ export default function ProfileScreen() {
   const displayList =
     tab === 'posts' ? myPosts.filter((p) => p.mediaType !== 'video') :
     tab === 'reels' ? myPosts.filter((p) => p.mediaType === 'video') :
+    tab === 'reposts' ? repostPosts :
     tab === 'saved' ? savedPosts : taggedPosts;
 
   const followListIds =
@@ -108,8 +113,7 @@ export default function ProfileScreen() {
     (user?.followRequests || []);
 
   const highlights: any[] = Array.isArray(user?.highlights) ? user.highlights : [];
-
-  return (
+    return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
       <View style={styles.topBar}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -136,7 +140,7 @@ export default function ProfileScreen() {
               <TouchableOpacity onPress={() => setEditOpen(true)}>
                 {user?.avatar ? <Image source={{ uri: user.avatar }} style={styles.avatar} /> : (
                   <View style={[styles.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
-                    <Text style={{ color: '#fff', fontSize: 26, fontWeight: '700' }}>{(user?.username || 'U')[0].toUpperCase()}</Text>
+                    <Text style={{ color: BRAND_TEXT, fontSize: 26, fontWeight: '700' }}>{(user?.username || 'U')[0].toUpperCase()}</Text>
                   </View>
                 )}
               </TouchableOpacity>
@@ -188,6 +192,7 @@ export default function ProfileScreen() {
               {([
                 { k: 'posts', icon: 'grid-outline' },
                 { k: 'reels', icon: 'play-circle-outline' },
+                { k: 'reposts', icon: 'repeat-outline' },
                 { k: 'saved', icon: 'bookmark-outline' },
                 { k: 'tagged', icon: 'person-outline' },
               ] as const).map((t) => (
@@ -243,3 +248,4 @@ const styles = StyleSheet.create({
   gridImg: { width: W, height: W },
   badge: { position: 'absolute', top: 6, right: 6 },
 });
+                                             
