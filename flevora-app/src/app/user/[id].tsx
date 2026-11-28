@@ -6,7 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
-  doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, QueryDocumentSnapshot, DocumentData,
+  collection, doc, onSnapshot, query, where, updateDoc, arrayUnion, arrayRemove, QueryDocumentSnapshot, DocumentData,
 } from 'firebase/firestore';
 import { auth, db } from '../../config';
 import { useTheme, BRAND, BRAND_TEXT } from '../../constants/theme';
@@ -17,6 +17,8 @@ import { fetchUserRepostsPage } from '../../constants/repostSystem';
 import { FollowListModal, shareProfileLink } from '../../constants/ProfileSubModals';
 import { ReportAccountModal, VisitorMoreModal, VisitorStoryModal, showProfileLinkDialog } from '../../constants/VisitorProfileModals';
 import { NoteDetailModal, canSeeNote } from '../../constants/NoteModal';
+import { canViewChannel, getChannelRole, joinChannelIdempotent } from '../../constants/broadcastCapabilities';
+import { BroadcastRoomModal } from '../../constants/BroadcastRoomModal';
 
 const W = (Dimensions.get('window').width - 4) / 3;
 
@@ -29,6 +31,8 @@ export default function UserProfileScreen() {
   const [profile, setProfile] = useState<any>(null);
   const [visitorNote, setVisitorNote] = useState<any>(null);
   const [noteOpen, setNoteOpen] = useState(false);
+  const [channels, setChannels] = useState<any[]>([]);
+  const [activeCh, setActiveCh] = useState<any>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [me, setMe] = useState<any>(null);
@@ -71,7 +75,10 @@ export default function UserProfileScreen() {
     );
     const u2 = myUid ? onSnapshot(doc(db, 'users', myUid), (s) => { if (s.exists()) setMe({ id: s.id, ...s.data() }); }) : () => {};
     const u3 = onSnapshot(doc(db, 'notes', id), (s) => setVisitorNote(s.exists() ? { id: s.id, ...s.data() } : null), () => {});
-    return () => { u1(); u2(); u3(); };
+    const u4 = onSnapshot(query(collection(db, 'channels'), where('ownerUid', '==', id)), (s) => {
+      setChannels(s.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }, () => {});
+    return () => { u1(); u2(); u3(); u4(); };
   }, [id, myUid]);
 
   const blocked = useMemo(() => isBlockedBetween(me, profile, myUid), [me, profile, myUid]);
@@ -170,6 +177,7 @@ export default function UserProfileScreen() {
 
   const followLabel = isFollowing ? 'Following' : isRequested ? 'Requested' : 'Follow';
   const highlights: any[] = canView && Array.isArray(profile.highlights) ? profile.highlights : [];
+  const visibleChannels = blocked ? [] : channels.filter((ch) => canViewChannel(ch, myUid, me));
   const displayList = !canView ? [] : tab === 'posts' ? posts.filter((p) => p.mediaType !== 'video') : tab === 'reels' ? posts.filter((p) => p.mediaType === 'video') : tab === 'reposts' ? repostPosts : taggedPosts;
   const iBlocked = Array.isArray(me?.blockedUsers) && me.blockedUsers.includes(id);
   const isMuted = Array.isArray(me?.mutedUsers) && me.mutedUsers.includes(id);
@@ -247,6 +255,20 @@ export default function UserProfileScreen() {
               </View>
             )}
 
+            {visibleChannels.map((ch) => {
+              const joined = getChannelRole(ch, myUid) !== 'none';
+              return (
+                <TouchableOpacity key={ch.id} onPress={async () => { if (!joined) await joinChannelIdempotent(ch, myUid); setActiveCh(ch); }} style={[styles.chRow, { backgroundColor: c.input }]}>
+                  <Ionicons name="megaphone-outline" size={17} color={BRAND} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }} numberOfLines={1}>{ch.name}</Text>
+                    <Text style={{ color: c.muted, fontSize: 11 }}>{ch.memberCount || ch.members?.length || 1} members</Text>
+                  </View>
+                  <Text style={{ color: BRAND, fontWeight: '800', fontSize: 12 }}>{joined ? 'Open' : 'Join'}</Text>
+                </TouchableOpacity>
+              );
+            })}
+
             {highlights.length > 0 && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 10 }}>
                 {highlights.map((h) => (
@@ -285,6 +307,7 @@ export default function UserProfileScreen() {
       <FollowListModal mode={followMode} ids={followMode === 'followers' ? (profile.followers || []) : (profile.following || [])} ownerUid={id} me={me} myUid={myUid} onClose={() => setFollowMode(null)} />
       <ExplorePostModal post={selectedPost} author={profile} me={me} onClose={() => setSelectedPost(null)} onPressTag={(t) => router.navigate({ pathname: '/explore', params: { q: t } } as any)} onPressPlace={(p) => router.navigate({ pathname: '/explore', params: { q: p } } as any)} />
       <NoteDetailModal visible={noteOpen} note={activeVisitorNote} owner={profile} me={me} myUid={myUid} onReplyDm={() => handleMessagePress()} onClose={() => setNoteOpen(false)} />
+      <BroadcastRoomModal visible={!!activeCh} channel={activeCh} myUid={myUid} me={me} onClose={() => setActiveCh(null)} />
       <VisitorStoryModal visible={storyViewer.open} title={storyViewer.title} stories={storyViewer.items} onClose={() => setStoryViewer({ open: false, title: '', items: [] })} />
       <ReportAccountModal visible={reportOpen} targetUser={profile} myUid={myUid} onClose={() => setReportOpen(false)} />
       <VisitorMoreModal visible={moreOpen} profile={profile} isFollowing={isFollowing} isRequested={isRequested} isBlocked={iBlocked} isMuted={isMuted} isRestricted={isRestricted} onClose={() => setMoreOpen(false)} onShare={() => shareProfileLink(id, profile.username || 'user')} onCopyLink={() => showProfileLinkDialog(id, profile.username || 'user')} onAbout={() => Alert.alert(`About @${profile.username}`, `Username: @${profile.username}\nAccount Type: ${profile.accountType || 'Personal'}\nPrivate: ${profile.isPrivate ? 'Yes' : 'No'}`)} onMute={() => toggleListField('mutedUsers', 'Muted')} onRestrict={() => toggleListField('restrictedUsers', 'Restricted')} onUnfollow={handleFollowPress} onCancelReq={handleFollowPress} onBlock={handleBlockToggle} onReport={() => setReportOpen(true)} />
@@ -307,6 +330,7 @@ const styles = StyleSheet.create({
   btnRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
   btn: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
   shareIconBtn: { paddingHorizontal: 12, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
+  chRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderRadius: 10, marginTop: 10 },
   hlCircle: { width: 58, height: 58, borderRadius: 29, borderWidth: 1.5 },
   lockBox: { alignItems: 'center', paddingVertical: 48 },
   tabs: { flexDirection: 'row', borderBottomWidth: 1, marginTop: 8 },
@@ -314,4 +338,3 @@ const styles = StyleSheet.create({
   gridImg: { width: W, height: W },
   badge: { position: 'absolute', top: 6, right: 6 },
 });
-                                                                                                                                    
