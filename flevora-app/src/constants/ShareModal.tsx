@@ -10,24 +10,41 @@ export function ShareModal({ visible, post, onClose }: { visible?: boolean; post
   const { c } = useTheme();
   const uid = auth.currentUser?.uid || '';
   const [users, setUsers] = useState<any[]>([]);
+  const [me, setMe] = useState<any>({});
   const [q, setQ] = useState('');
   const isOpen = visible !== undefined ? Boolean(visible && post) : Boolean(post);
 
   useEffect(() => {
     if (!isOpen) return;
     return onSnapshot(collection(db, 'users'), (s) => {
-      setUsers(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((u) => u.id !== uid));
+      const list = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const mine = list.find((u) => u.id === uid);
+      if (mine) setMe(mine);
+      setUsers(list.filter((u) => u.id !== uid));
     }, () => {});
   }, [isOpen, uid]);
 
-  const sendToUser = async (targetUid: string, uname: string) => {
+  const sendToUser = async (targetUser: any) => {
     if (!uid || !post) return;
-    const chatId = [uid, targetUid].sort().join('_');
+    const blocked = (me?.blockedUsers || []).includes(targetUser.id) || (targetUser?.blockedUsers || []).includes(uid);
+    if (blocked) return Alert.alert('Unavailable', 'You cannot message this user.');
+    if (post.isPrivate && post.uid !== uid) {
+      return Alert.alert('Private Content', 'Private Reels cannot be shared to other users.');
+    }
+    const chatId = [uid, targetUser.id].sort().join('_');
+    const thumb = post.thumbnailUrl || (post.mediaType === 'video' ? post.mediaUrl?.replace(/\.[^/.]+$/, '.jpg') : post.mediaUrl) || '';
     await addDoc(collection(db, 'conversations', chatId, 'messages'), {
-      senderUid: uid, text: post.caption || 'Shared a post', mediaUrl: post.mediaUrl || '',
-      mediaType: post.mediaType || 'image', read: false, createdAt: serverTimestamp(),
+      senderUid: uid,
+      text: post.caption || (post.mediaType === 'video' ? `Shared @${post.username || 'user'}'s Reel` : 'Shared a post'),
+      mediaUrl: post.mediaUrl || '',
+      mediaType: post.mediaType || 'image',
+      sharedPostId: post.id,
+      sharedThumbnail: thumb,
+      sharedCreator: post.username || 'user',
+      read: false,
+      createdAt: serverTimestamp(),
     });
-    Alert.alert('Sent', `Shared with @${uname}!`);
+    Alert.alert('Sent', `Shared with @${targetUser.username}!`);
     onClose();
   };
 
@@ -38,11 +55,11 @@ export function ShareModal({ visible, post, onClose }: { visible?: boolean; post
     }
     try {
       const meSnap = await getDoc(doc(db, 'users', uid));
-      const me = meSnap.data() || {};
+      const curMe = meSnap.data() || {};
       await addDoc(collection(db, 'stories'), {
         uid,
-        username: me.username || 'user',
-        userPhoto: me.photoUrl || me.avatar || '',
+        username: curMe.username || 'user',
+        userPhoto: curMe.photoUrl || curMe.avatar || '',
         mediaUrl: post.mediaUrl || '',
         mediaType: post.mediaType === 'video' ? 'video' : 'image',
         textOverlay: post.username ? `Shared from @${post.username}` : '',
@@ -62,7 +79,12 @@ export function ShareModal({ visible, post, onClose }: { visible?: boolean; post
     }
   };
 
-  const filtered = users.filter((u) => (u.username || '').toLowerCase().includes(q.trim().toLowerCase()));
+  const filtered = users.filter((u) => {
+    const blocked = (me?.blockedUsers || []).includes(u.id) || (u?.blockedUsers || []).includes(uid);
+    return !blocked && (u.username || '').toLowerCase().includes(q.trim().toLowerCase());
+  });
+
+  const deepLink = post?.mediaType === 'video' ? `flevora://reels?startId=${post?.id}` : `flevora://post/${post?.id}`;
 
   return (
     <Modal visible={isOpen} animationType="slide" transparent onRequestClose={onClose}>
@@ -78,7 +100,7 @@ export function ShareModal({ visible, post, onClose }: { visible?: boolean; post
             numColumns={3}
             keyExtractor={(i) => i.id}
             renderItem={({ item }) => (
-              <TouchableOpacity style={styles.user} onPress={() => sendToUser(item.id, item.username)}>
+              <TouchableOpacity style={styles.user} onPress={() => sendToUser(item)}>
                 {item.photoUrl || item.avatar ? <Image source={{ uri: item.photoUrl || item.avatar }} style={styles.av} /> : (
                   <View style={[styles.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
                     <Text style={{ color: BRAND_TEXT, fontWeight: '700', fontSize: 18 }}>{(item.username || 'U')[0].toUpperCase()}</Text>
@@ -94,9 +116,9 @@ export function ShareModal({ visible, post, onClose }: { visible?: boolean; post
               <Text style={{ color: c.text, fontWeight: '700' }}>Add to Your Story</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={[styles.extBtn, { borderTopColor: c.border }]} onPress={() => Share.share({ message: `${post?.caption || 'Check this on Flevora!'} ${post?.mediaUrl || ''}` })}>
+          <TouchableOpacity style={[styles.extBtn, { borderTopColor: c.border }]} onPress={() => Share.share({ message: `${post?.caption || 'Check this on Flevora!'} ${deepLink}` })}>
             <Ionicons name="share-social-outline" size={20} color={BRAND} />
-            <Text style={{ color: c.text, fontWeight: '700' }}>Share to WhatsApp / Other Apps</Text>
+            <Text style={{ color: c.text, fontWeight: '700' }}>Copy Link / Share to Other Apps</Text>
           </TouchableOpacity>
         </View>
       </View>
