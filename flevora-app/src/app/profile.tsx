@@ -18,6 +18,7 @@ import { SavedLibraryView } from '../constants/SaveModals';
 import { NoteModal, NoteDetailModal, canSeeNote } from '../constants/NoteModal';
 import { BroadcastRoomModal } from '../constants/BroadcastRoomModal';
 import { BroadcastChannelsHub } from '../constants/BroadcastChannelsHub';
+import { ArchivedReelsModal } from '../constants/ReelsPart2Modals';
 import UploadScreen from './upload';
 
 const W = (Dimensions.get('window').width - 4) / 3;
@@ -48,6 +49,7 @@ export default function ProfileScreen() {
   const [createOpen, setCreateOpen] = useState(false);
   const [proOpen, setProOpen] = useState(false);
   const [colsOpen, setColsOpen] = useState(false);
+  const [archivedOpen, setArchivedOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDetailOpen, setNoteDetailOpen] = useState(false);
   const [followMode, setFollowMode] = useState<'followers' | 'following' | 'requests' | null>(null);
@@ -74,7 +76,7 @@ export default function ProfileScreen() {
       ]);
       const collabItems = collabSnap ? collabSnap.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
       const seen = new Set(pPage.items.map((x: any) => x.id));
-      const merged = [...pPage.items, ...collabItems.filter((x: any) => !seen.has(x.id))];
+      const merged = [...pPage.items, ...collabItems.filter((x: any) => !seen.has(x.id))].filter((x: any) => !x.isArchived && !x.isDeleted);
       merged.sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setMyPosts(merged);
       setPostsCursor(pPage.lastDoc);
@@ -102,7 +104,7 @@ export default function ProfileScreen() {
     const pPage = await fetchUserPostsPage(uid, postsCursor, 18);
     setMyPosts((prev) => {
       const seen = new Set(prev.map((x) => x.id));
-      return [...prev, ...pPage.items.filter((x) => !seen.has(x.id))];
+      return [...prev, ...pPage.items.filter((x: any) => !seen.has(x.id) && !x.isArchived && !x.isDeleted)];
     });
     setPostsCursor(pPage.lastDoc);
     setPostsHasMore(pPage.hasMore);
@@ -241,6 +243,14 @@ export default function ProfileScreen() {
               ))}
             </View>
 
+            {tab === 'reels' && (
+              <TouchableOpacity onPress={() => setArchivedOpen(true)} style={[styles.colBar, { backgroundColor: c.input }]}>
+                <Ionicons name="archive-outline" size={18} color={c.text} />
+                <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>Open Archived Reels</Text>
+                <Ionicons name="chevron-forward" size={16} color={c.muted} />
+              </TouchableOpacity>
+            )}
+
             {tab === 'saved' && (
               <TouchableOpacity onPress={() => setColsOpen(true)} style={[styles.colBar, { backgroundColor: c.input }]}>
                 <Ionicons name="folder-open-outline" size={18} color={c.text} />
@@ -252,12 +262,19 @@ export default function ProfileScreen() {
         }
         ListEmptyComponent={loading ? <ActivityIndicator style={{ marginTop: 30 }} color={BRAND} /> : <Text style={{ color: c.muted, textAlign: 'center', marginTop: 40 }}>Nothing here yet.</Text>}
         renderItem={({ item }) => (
-          <TouchableOpacity onPress={() => setSelectedPost(item)} onLongPress={() => item.uid === uid && deletePost(item.id)} style={{ margin: 0.6 }}>
-            <Image source={{ uri: getThumbUrl(item) }} style={styles.gridImg} />
+          <TouchableOpacity
+            onPress={() => item.mediaType === 'video' ? router.push(`/reels?startId=${item.id}` as any) : setSelectedPost(item)}
+            onLongPress={() => item.uid === uid && deletePost(item.id)}
+            style={{ margin: 0.6 }}
+          >
+            <Image source={{ uri: item.thumbnailUrl || getThumbUrl(item) }} style={styles.gridImg} />
             {Array.isArray(item.mediaItems) && item.mediaItems.length > 1 ? (
               <Ionicons name="layers" size={16} color="#fff" style={styles.badge} />
             ) : item.mediaType === 'video' ? (
-              <Ionicons name="play" size={16} color="#fff" style={styles.badge} />
+              <View style={styles.playBadge}>
+                <Ionicons name="play" size={12} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>{item.views || 0}</Text>
+              </View>
             ) : null}
           </TouchableOpacity>
         )}
@@ -273,6 +290,7 @@ export default function ProfileScreen() {
       <NoteDetailModal visible={noteDetailOpen} note={activeNote} owner={user} me={user} myUid={uid} onEditOwn={() => setNoteOpen(true)} onClose={() => setNoteDetailOpen(false)} />
       <BroadcastRoomModal visible={!!activeCh} channel={activeCh} myUid={uid} me={user} onClose={() => setActiveCh(null)} />
       <BroadcastChannelsHub visible={hubOpen} myUid={uid} me={user} onClose={() => setHubOpen(false)} />
+      <ArchivedReelsModal visible={archivedOpen} uid={uid} onClose={() => { setArchivedOpen(false); loadData(); }} />
       <Modal visible={colsOpen} animationType="slide" onRequestClose={() => setColsOpen(false)}>
         <View style={[styles.container, { backgroundColor: c.background }]}>
           <View style={[styles.topBar, { borderBottomWidth: 0.5, borderBottomColor: c.border }]}>
@@ -309,5 +327,6 @@ const styles = StyleSheet.create({
   colBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 11, borderRadius: 10, marginVertical: 8 },
   gridImg: { width: W, height: W },
   badge: { position: 'absolute', top: 6, right: 6 },
+  playBadge: { position: 'absolute', bottom: 6, left: 6, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 5, paddingVertical: 2, borderRadius: 6 },
 });
-      
+  
