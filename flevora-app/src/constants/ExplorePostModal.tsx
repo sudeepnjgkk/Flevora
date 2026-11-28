@@ -5,7 +5,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useRouter } from 'expo-router';
-import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND, BRAND_TEXT } from './theme';
 import { CommentModal } from './CommentModal';
@@ -15,6 +15,8 @@ import { AnimatedLikeButton, DoubleTapHeartOverlay } from './LikeComponents';
 import { formatLikesLabel, togglePostLike } from './likeSystem';
 import { RepostButton, RepostSheetModal, RepostersModal } from './RepostModals';
 import { saveRepostThought, toggleRepost } from './repostSystem';
+import { SaveButton, SaveCollectionSheet } from './SaveModals';
+import { toggleSavePost } from './saveSystem';
 
 const W = Dimensions.get('window').width;
 
@@ -59,6 +61,7 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
   const [sharePost, setSharePost] = useState<any | null>(null);
   const [repostOpen, setRepostOpen] = useState(false);
   const [repostersOpen, setRepostersOpen] = useState(false);
+  const [saveColOpen, setSaveColOpen] = useState(false);
 
   useEffect(() => {
     if (!post) { setLivePost(null); setBlockedMsg(null); return; }
@@ -98,22 +101,10 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
   const triggerLike = (forceLike = false) => {
     const prevLikes: string[] = Array.isArray(p.likes) ? p.likes : [];
     togglePostLike({
-      post: p,
-      myUid,
-      me,
-      targetUser: liveAuthor,
-      forceLike,
-      onOptimistic: (nextLiked) => {
-        const nextLikes = nextLiked ? Array.from(new Set([...prevLikes, myUid])) : prevLikes.filter((x) => x !== myUid);
-        setLivePost({ ...p, likes: nextLikes });
-      },
+      post: p, myUid, me, targetUser: liveAuthor, forceLike,
+      onOptimistic: (nextLiked) => setLivePost({ ...p, likes: nextLiked ? Array.from(new Set([...prevLikes, myUid])) : prevLikes.filter((x) => x !== myUid) }),
       onRollback: () => setLivePost({ ...p, likes: prevLikes }),
     });
-  };
-
-  const handleSave = async () => {
-    if (!myUid) return;
-    await updateDoc(doc(db, 'users', myUid), { savedPosts: saved ? arrayRemove(p.id) : arrayUnion(p.id) }).catch(() => {});
   };
 
   const renderCaptionWithTags = (caption: string) => {
@@ -208,12 +199,7 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
                 <TouchableOpacity onPress={() => setCommentPostId(p.id)}>
                   <Ionicons name="chatbubble-outline" size={24} color={c.text} />
                 </TouchableOpacity>
-                <RepostButton
-                  reposted={reposted}
-                  count={p.reposts?.length || 0}
-                  onPress={() => setRepostOpen(true)}
-                  onLongPressCount={() => setRepostersOpen(true)}
-                />
+                <RepostButton reposted={reposted} count={p.reposts?.length || 0} onPress={() => setRepostOpen(true)} onLongPressCount={() => setRepostersOpen(true)} />
                 <TouchableOpacity onPress={() => setSharePost(p)}>
                   <Ionicons name="paper-plane-outline" size={24} color={c.text} />
                 </TouchableOpacity>
@@ -228,9 +214,11 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
                     <Text style={{ color: BRAND_TEXT, fontSize: 12, fontWeight: '700' }}>Reels</Text>
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity onPress={handleSave}>
-                  <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={24} color={saved ? BRAND : c.text} />
-                </TouchableOpacity>
+                <SaveButton
+                  saved={saved}
+                  onPress={() => toggleSavePost({ postId: p.id, myUid, me })}
+                  onLongPress={() => setSaveColOpen(true)}
+                />
               </View>
             </View>
 
@@ -249,16 +237,14 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
         <CommentModal postId={commentPostId} post={p} onClose={() => setCommentPostId(null)} />
         <ShareModal post={sharePost} onClose={() => setSharePost(null)} />
         <RepostSheetModal
-          visible={repostOpen}
-          post={p}
-          myUid={myUid}
-          onClose={() => setRepostOpen(false)}
+          visible={repostOpen} post={p} myUid={myUid} onClose={() => setRepostOpen(false)}
           onRepost={(th) => toggleRepost({ post: p, myUid, me, owner: liveAuthor, thought: th, onOptimistic: (rep, t) => setLivePost({ ...p, reposts: rep ? [...(p.reposts || []), myUid] : (p.reposts || []).filter((x: string) => x !== myUid), repostThoughts: { ...(p.repostThoughts || {}), [myUid]: t } }) })}
           onSaveThought={(th) => saveRepostThought(p.id, myUid, th)}
           onRemoveRepost={() => toggleRepost({ post: p, myUid, me, forceRemove: true, onOptimistic: () => setLivePost({ ...p, reposts: (p.reposts || []).filter((x: string) => x !== myUid) }) })}
           onOpenReposters={() => setRepostersOpen(true)}
         />
         <RepostersModal visible={repostersOpen} uids={p.reposts || []} me={me} myUid={myUid} onClose={() => setRepostersOpen(false)} />
+        <SaveCollectionSheet visible={saveColOpen} post={p} myUid={myUid} me={me} onClose={() => setSaveColOpen(false)} />
       </View>
     </Modal>
   );
