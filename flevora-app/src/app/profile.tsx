@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { collection, doc, onSnapshot, deleteDoc, query, where, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
+import { collection, doc, onSnapshot, deleteDoc, getDocs, query, where, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND, BRAND_TEXT } from '../constants/theme';
 import { ExplorePostModal } from '../constants/ExplorePostModal';
@@ -68,8 +68,15 @@ export default function ProfileScreen() {
     if (!uid) return;
     setLoading(true);
     try {
-      const pPage = await fetchUserPostsPage(uid, null, 18);
-      setMyPosts(pPage.items);
+      const [pPage, collabSnap] = await Promise.all([
+        fetchUserPostsPage(uid, null, 18),
+        getDocs(query(collection(db, 'posts'), where('collaborators', 'array-contains', uid))).catch(() => null),
+      ]);
+      const collabItems = collabSnap ? collabSnap.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
+      const seen = new Set(pPage.items.map((x: any) => x.id));
+      const merged = [...pPage.items, ...collabItems.filter((x: any) => !seen.has(x.id))];
+      merged.sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      setMyPosts(merged);
       setPostsCursor(pPage.lastDoc);
       setPostsHasMore(pPage.hasMore);
     } finally {
@@ -247,7 +254,11 @@ export default function ProfileScreen() {
         renderItem={({ item }) => (
           <TouchableOpacity onPress={() => setSelectedPost(item)} onLongPress={() => item.uid === uid && deletePost(item.id)} style={{ margin: 0.6 }}>
             <Image source={{ uri: getThumbUrl(item) }} style={styles.gridImg} />
-            {item.mediaType === 'video' && <Ionicons name="play" size={16} color="#fff" style={styles.badge} />}
+            {Array.isArray(item.mediaItems) && item.mediaItems.length > 1 ? (
+              <Ionicons name="layers" size={16} color="#fff" style={styles.badge} />
+            ) : item.mediaType === 'video' ? (
+              <Ionicons name="play" size={16} color="#fff" style={styles.badge} />
+            ) : null}
           </TouchableOpacity>
         )}
       />
@@ -273,12 +284,7 @@ export default function ProfileScreen() {
         </View>
       </Modal>
       <Modal visible={createOpen} animationType="slide" onRequestClose={() => setCreateOpen(false)}>
-        <View style={{ flex: 1 }}>
-          <TouchableOpacity onPress={() => setCreateOpen(false)} style={{ position: 'absolute', top: 46, right: 16, zIndex: 50, padding: 6 }}>
-            <Ionicons name="close" size={26} color={c.text} />
-          </TouchableOpacity>
-          <UploadScreen />
-        </View>
+        <UploadScreen initialMode="POST" onClose={() => { setCreateOpen(false); loadData(); }} />
       </Modal>
     </View>
   );
@@ -304,3 +310,4 @@ const styles = StyleSheet.create({
   gridImg: { width: W, height: W },
   badge: { position: 'absolute', top: 6, right: 6 },
 });
+      
