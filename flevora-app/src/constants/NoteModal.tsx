@@ -9,7 +9,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { useRouter } from 'expo-router';
 import {
   doc, setDoc, updateDoc, deleteDoc, addDoc, collection,
-  arrayUnion, deleteField, serverTimestamp,
+  arrayUnion, arrayRemove, deleteField, serverTimestamp,
 } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND, BRAND_TEXT } from './theme';
@@ -298,7 +298,7 @@ export function NoteDetailModal({
     } else {
       Alert.alert(`@${owner?.username || note.username}`, undefined, [
         { text: L.visitProfile, onPress: () => { onClose(); router.push(`/user/${note.uid}` as any); } },
-        { text: isMuted ? L.unmuteNotes : L.muteNotes, onPress: async () => { await updateDoc(doc(db, 'users', myUid), { mutedNotes: isMuted ? arrayUnion() : arrayUnion(note.uid) }); onClose(); } },
+        { text: isMuted ? L.unmuteNotes : L.muteNotes, onPress: async () => { await updateDoc(doc(db, 'users', myUid), { mutedNotes: isMuted ? arrayRemove(note.uid) : arrayUnion(note.uid) }); onClose(); } },
         {
           text: L.reportNote, style: 'destructive',
           onPress: () => Alert.alert('Report Category', 'Select reason:', [
