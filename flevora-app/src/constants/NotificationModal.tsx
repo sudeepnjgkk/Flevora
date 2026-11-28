@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { collection, query, where, orderBy, limit, onSnapshot, updateDoc, doc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { auth, db } from '../config';
-import { useTheme, BRAND } from './theme';
+import { useTheme, BRAND, BRAND_TEXT } from './theme';
 import { StoryViewerModal } from './StoryViewerModal';
 
 const relTime = (ts: any) => {
@@ -30,6 +30,7 @@ export function NotificationModal({ visible, onClose }: { visible: boolean; onCl
   const [postsMap, setPostsMap] = useState<Record<string, any>>({});
   const [storiesMap, setStoriesMap] = useState<Record<string, any>>({});
   const [viewStory, setViewStory] = useState<any[] | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!uid || !visible) return;
@@ -95,6 +96,25 @@ export function NotificationModal({ visible, onClose }: { visible: boolean; onCl
     }
   };
 
+  const handleCollab = async (item: any, accept: boolean) => {
+    if (!uid || !item?.postId || busyId === item.id) return;
+    setBusyId(item.id);
+    try {
+      await updateDoc(doc(db, 'posts', item.postId), accept
+        ? { pendingCollaborators: arrayRemove(uid), collaborators: arrayUnion(uid) }
+        : { pendingCollaborators: arrayRemove(uid) });
+      await updateDoc(doc(db, 'notifications', item.id), {
+        actionStatus: accept ? 'accepted' : 'declined',
+        status: accept ? 'accepted' : 'declined',
+        read: true,
+      });
+    } catch {
+      Alert.alert('Error', 'Could not update collaborator invite.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const onTapItem = (item: any) => {
     markRead(item);
     if (item.storyId) {
@@ -122,7 +142,7 @@ export function NotificationModal({ visible, onClose }: { visible: boolean; onCl
         <View style={s.tabs}>
           {(['all', 'following', 'unread'] as const).map((t) => (
             <TouchableOpacity key={t} onPress={() => setFilter(t)} style={[s.pill, { backgroundColor: filter === t ? BRAND : c.surface }]}>
-              <Text style={{ color: filter === t ? '#fff' : c.text, fontWeight: '700', fontSize: 13, textTransform: 'capitalize' }}>{t}</Text>
+              <Text style={{ color: filter === t ? BRAND_TEXT : c.text, fontWeight: '700', fontSize: 13, textTransform: 'capitalize' }}>{t}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -144,12 +164,14 @@ export function NotificationModal({ visible, onClose }: { visible: boolean; onCl
               const thumb = item.mediaUrl || st?.mediaUrl || (post?.mediaType === 'video' ? post?.mediaUrl?.replace(/\.[^/.]+$/, '.jpg') : post?.mediaUrl);
               const isF = Array.isArray(me?.following) && me.following.includes(item.fromUid);
               const msg = item.groupCount > 1 ? `and ${item.groupCount - 1} others liked your post.` : item.message;
+              const collabStatus = item.actionStatus || item.status;
+              const isPendingCollab = item.type === 'collab_invite' && !!item.postId && collabStatus !== 'accepted' && collabStatus !== 'declined';
 
               return (
                 <TouchableOpacity style={[s.row, !item.read && { backgroundColor: `${BRAND}0F` }]} onPress={() => onTapItem(item)}>
                   {!item.read && <View style={s.blueDot} />}
                   <TouchableOpacity onPress={() => { onClose(); if (item.fromUid) router.push(`/user/${item.fromUid}` as any); }}>
-                    {dp ? <Image source={{ uri: dp }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={20} color="#fff" /></View>}
+                    {dp ? <Image source={{ uri: dp }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={20} color={BRAND_TEXT} /></View>}
                   </TouchableOpacity>
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: c.text, fontSize: 14, lineHeight: 19 }}>
@@ -158,17 +180,26 @@ export function NotificationModal({ visible, onClose }: { visible: boolean; onCl
                     </Text>
                     {item.type === 'follow_request' && item.actionStatus === 'pending' && (
                       <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-                        <TouchableOpacity onPress={() => handleReq(item, true)} style={s.reqBtn}><Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Confirm</Text></TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleReq(item, true)} style={s.reqBtn}><Text style={{ color: BRAND_TEXT, fontWeight: '700', fontSize: 12 }}>Confirm</Text></TouchableOpacity>
                         <TouchableOpacity onPress={() => handleReq(item, false)} style={[s.reqBtn, { backgroundColor: c.surface }]}><Text style={{ color: c.text, fontWeight: '700', fontSize: 12 }}>Delete</Text></TouchableOpacity>
                       </View>
                     )}
                     {item.type === 'follow_request' && item.actionStatus !== 'pending' && (
                       <Text style={{ color: c.muted, fontSize: 12, marginTop: 2, textTransform: 'capitalize' }}>{item.actionStatus}</Text>
                     )}
+                    {isPendingCollab && (
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                        <TouchableOpacity disabled={busyId === item.id} onPress={() => handleCollab(item, true)} style={s.reqBtn}><Text style={{ color: BRAND_TEXT, fontWeight: '700', fontSize: 12 }}>Accept</Text></TouchableOpacity>
+                        <TouchableOpacity disabled={busyId === item.id} onPress={() => handleCollab(item, false)} style={[s.reqBtn, { backgroundColor: c.surface }]}><Text style={{ color: c.text, fontWeight: '700', fontSize: 12 }}>Decline</Text></TouchableOpacity>
+                      </View>
+                    )}
+                    {item.type === 'collab_invite' && (collabStatus === 'accepted' || collabStatus === 'declined') && (
+                      <Text style={{ color: c.muted, fontSize: 12, marginTop: 2, textTransform: 'capitalize' }}>{collabStatus}</Text>
+                    )}
                   </View>
                   {item.type === 'follow' && item.fromUid ? (
                     <TouchableOpacity onPress={() => handleFollowBack(item.fromUid)} style={[s.fBtn, { backgroundColor: isF ? c.surface : BRAND }]}>
-                      <Text style={{ color: isF ? c.text : '#fff', fontWeight: '700', fontSize: 12 }}>{isF ? 'Following' : 'Follow Back'}</Text>
+                      <Text style={{ color: isF ? c.text : BRAND_TEXT, fontWeight: '700', fontSize: 12 }}>{isF ? 'Following' : 'Follow Back'}</Text>
                     </TouchableOpacity>
                   ) : thumb ? <Image source={{ uri: thumb }} style={s.thumb} /> : null}
                 </TouchableOpacity>
