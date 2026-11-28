@@ -13,6 +13,8 @@ import { AnimatedLikeButton, DoubleTapHeartOverlay } from '../constants/LikeComp
 import { formatLikesLabel, togglePostLike } from '../constants/likeSystem';
 import { RepostButton, RepostSheetModal, RepostersModal } from '../constants/RepostModals';
 import { saveRepostThought, toggleRepost } from '../constants/repostSystem';
+import { SaveButton, SaveCollectionSheet } from '../constants/SaveModals';
+import { toggleSavePost } from '../constants/saveSystem';
 
 const W = Dimensions.get('window').width;
 
@@ -62,6 +64,7 @@ export default function HomeScreen() {
   const [sharePost, setSharePost] = useState<any>(null);
   const [repostTarget, setRepostTarget] = useState<any>(null);
   const [repostersUids, setRepostersUids] = useState<string[] | null>(null);
+  const [saveTarget, setSaveTarget] = useState<any>(null);
   const [storyList, setStoryList] = useState<any[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -85,8 +88,7 @@ export default function HomeScreen() {
     }, () => {});
     return () => { u1(); u2(); u3(); };
   }, [uid, limitCount]);
-
-  const toggleLike = (post: any, forceLike = false) => {
+    const toggleLike = (post: any, forceLike = false) => {
     const prevLikes: string[] = Array.isArray(post.likes) ? post.likes : [];
     togglePostLike({
       post,
@@ -103,7 +105,24 @@ export default function HomeScreen() {
       },
     });
   };
-    const onAvatarLongPress = (targetUid: string, userStories: any[]) => {
+
+  const toggleSave = (post: any) => {
+    const prevSaved: string[] = Array.isArray(me?.savedPosts) ? me.savedPosts : [];
+    toggleSavePost({
+      postId: post.id,
+      myUid: uid,
+      me,
+      onOptimistic: (nextSaved) => {
+        const nextList = nextSaved ? Array.from(new Set([...prevSaved, post.id])) : prevSaved.filter((x) => x !== post.id);
+        setMe((prev: any) => (prev ? { ...prev, savedPosts: nextList } : prev));
+      },
+      onRollback: () => {
+        setMe((prev: any) => (prev ? { ...prev, savedPosts: prevSaved } : prev));
+      },
+    });
+  };
+
+  const onAvatarLongPress = (targetUid: string, userStories: any[]) => {
     const isMuted = Array.isArray(me?.mutedUsers) && me.mutedUsers.includes(targetUid);
     const btns: any[] = [];
     if (userStories.length > 0) btns.push({ text: 'View Story', onPress: () => setStoryList(userStories) });
@@ -114,7 +133,10 @@ export default function HomeScreen() {
   };
 
   const openPostOptions = (post: any) => {
-    const btns: any[] = [{ text: 'Report Post', style: 'destructive', onPress: () => addDoc(collection(db, 'reports'), { postId: post.id, type: 'post', status: 'pending', reportedBy: uid, createdAt: serverTimestamp() }) }];
+    const btns: any[] = [
+      { text: 'Save to Collection', onPress: () => setSaveTarget(post) },
+      { text: 'Report Post', style: 'destructive', onPress: () => addDoc(collection(db, 'reports'), { postId: post.id, type: 'post', status: 'pending', reportedBy: uid, createdAt: serverTimestamp() }) },
+    ];
     if (post.uid === uid) btns.unshift({ text: 'Delete Post', style: 'destructive', onPress: () => deleteDoc(doc(db, 'posts', post.id)) });
     btns.push({ text: 'Cancel', style: 'cancel' });
     Alert.alert('Post Options', undefined, btns);
@@ -189,9 +211,12 @@ export default function HomeScreen() {
                   />
                   <TouchableOpacity onPress={() => setSharePost(item)}><Ionicons name="paper-plane-outline" size={23} color={c.text} /></TouchableOpacity>
                 </View>
-                <TouchableOpacity onPress={() => uid && updateDoc(doc(db, 'users', uid), { savedPosts: saved ? arrayRemove(item.id) : arrayUnion(item.id) })}>
-                  <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={23} color={saved ? BRAND : c.text} />
-                </TouchableOpacity>
+                <SaveButton
+                  saved={saved}
+                  size={23}
+                  onPress={() => toggleSave(item)}
+                  onLongPress={() => setSaveTarget(item)}
+                />
               </View>
 
               <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
@@ -221,6 +246,7 @@ export default function HomeScreen() {
         onOpenReposters={() => setRepostersUids(repostTarget.reposts || [])}
       />
       <RepostersModal visible={!!repostersUids} uids={repostersUids || []} me={me} myUid={uid} onClose={() => setRepostersUids(null)} />
+      <SaveCollectionSheet visible={!!saveTarget} post={saveTarget} myUid={uid} me={me} onClose={() => setSaveTarget(null)} />
     </View>
   );
 }
@@ -235,4 +261,4 @@ const s = StyleSheet.create({
   volBtn: { position: 'absolute', right: 12, bottom: 12, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', zIndex: 20, elevation: 20 },
   actions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
 });
-                  
+        
