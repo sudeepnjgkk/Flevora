@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Image, TouchableOpacity, FlatList, Dimensions, StyleSheet, Alert, RefreshControl } from 'react-native';
+import { View, Text, Image, TouchableOpacity, FlatList, ScrollView, Dimensions, StyleSheet, Alert, RefreshControl, Modal, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -8,13 +8,14 @@ import { auth, db } from '../config';
 import { FeedHeader, CommentModal } from '../constants/FeedHeader';
 import { ShareModal } from '../constants/ShareModal';
 import { StoryViewerModal } from '../constants/StoryViewerModal';
-import { useTheme, BRAND, NEON } from '../constants/theme';
+import { useTheme, BRAND, BRAND_TEXT, NEON } from '../constants/theme';
 import { AnimatedLikeButton, DoubleTapHeartOverlay } from '../constants/LikeComponents';
 import { formatLikesLabel, togglePostLike } from '../constants/likeSystem';
 import { RepostButton, RepostSheetModal, RepostersModal } from '../constants/RepostModals';
 import { saveRepostThought, toggleRepost } from '../constants/repostSystem';
 import { SaveButton, SaveCollectionSheet } from '../constants/SaveModals';
 import { toggleSavePost } from '../constants/saveSystem';
+import { updatePublishedPost } from '../constants/postCreationSystem';
 
 const W = Dimensions.get('window').width;
 
@@ -65,6 +66,9 @@ export default function HomeScreen() {
   const [repostTarget, setRepostTarget] = useState<any>(null);
   const [repostersUids, setRepostersUids] = useState<string[] | null>(null);
   const [saveTarget, setSaveTarget] = useState<any>(null);
+  const [editPost, setEditPost] = useState<any>(null);
+  const [editCap, setEditCap] = useState('');
+  const [editLoc, setEditLoc] = useState('');
   const [storyList, setStoryList] = useState<any[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -91,11 +95,7 @@ export default function HomeScreen() {
     const toggleLike = (post: any, forceLike = false) => {
     const prevLikes: string[] = Array.isArray(post.likes) ? post.likes : [];
     togglePostLike({
-      post,
-      myUid: uid,
-      me,
-      targetUser: userMap[post.uid],
-      forceLike,
+      post, myUid: uid, me, targetUser: userMap[post.uid], forceLike,
       onOptimistic: (nextLiked) => {
         const nextLikes = nextLiked ? Array.from(new Set([...prevLikes, uid])) : prevLikes.filter((x) => x !== uid);
         setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, likes: nextLikes } : p)));
@@ -109,16 +109,12 @@ export default function HomeScreen() {
   const toggleSave = (post: any) => {
     const prevSaved: string[] = Array.isArray(me?.savedPosts) ? me.savedPosts : [];
     toggleSavePost({
-      postId: post.id,
-      myUid: uid,
-      me,
+      postId: post.id, myUid: uid, me,
       onOptimistic: (nextSaved) => {
         const nextList = nextSaved ? Array.from(new Set([...prevSaved, post.id])) : prevSaved.filter((x) => x !== post.id);
         setMe((prev: any) => (prev ? { ...prev, savedPosts: nextList } : prev));
       },
-      onRollback: () => {
-        setMe((prev: any) => (prev ? { ...prev, savedPosts: prevSaved } : prev));
-      },
+      onRollback: () => setMe((prev: any) => (prev ? { ...prev, savedPosts: prevSaved } : prev)),
     });
   };
 
@@ -137,17 +133,27 @@ export default function HomeScreen() {
       { text: 'Save to Collection', onPress: () => setSaveTarget(post) },
       { text: 'Report Post', style: 'destructive', onPress: () => addDoc(collection(db, 'reports'), { postId: post.id, type: 'post', status: 'pending', reportedBy: uid, createdAt: serverTimestamp() }) },
     ];
-    if (post.uid === uid) btns.unshift({ text: 'Delete Post', style: 'destructive', onPress: () => deleteDoc(doc(db, 'posts', post.id)) });
+    if (post.uid === uid) {
+      btns.unshift({ text: 'Delete Post', style: 'destructive', onPress: () => deleteDoc(doc(db, 'posts', post.id)) });
+      btns.unshift({ text: 'Edit Post', onPress: () => { setEditPost(post); setEditCap(post.caption || ''); setEditLoc(post.location || ''); } });
+    }
     btns.push({ text: 'Cancel', style: 'cancel' });
     Alert.alert('Post Options', undefined, btns);
   };
 
   const onView = useRef(({ viewableItems }: any) => { if (viewableItems[0]?.item?.id) setActiveId(viewableItems[0].item.id); }).current;
 
+  const visiblePosts = posts.filter((p) => {
+    if (p.uid === uid) return true;
+    if (p.audience === 'closeFriends') return Array.isArray(p.allowedUids) && p.allowedUids.includes(uid);
+    if (p.audience === 'followers') return Array.isArray(me?.following) && me.following.includes(p.uid);
+    return true;
+  });
+
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
       <FlatList
-        data={posts}
+        data={visiblePosts}
         keyExtractor={(i) => i.id}
         ListHeaderComponent={<FeedHeader />}
         onViewableItemsChanged={onView}
@@ -165,6 +171,7 @@ export default function HomeScreen() {
           const saved = Array.isArray(me?.savedPosts) && me.savedPosts.includes(item.id);
           const reposted = Array.isArray(item.reposts) && item.reposts.includes(uid);
           const reposterFriendUid = (item.reposts || []).find((rUid: string) => rUid !== uid && me?.following?.includes(rUid));
+          const mediaArr: string[] = Array.isArray(item.media) && item.media.length > 0 ? item.media : [item.mediaUrl];
 
           return (
             <View style={[s.card, { borderBottomColor: c.border }]}>
@@ -183,15 +190,33 @@ export default function HomeScreen() {
                   <TouchableOpacity onPress={() => (hasStory ? setStoryList(userStories) : router.push(`/user/${item.uid}` as any))} onLongPress={() => onAvatarLongPress(item.uid, userStories)} style={[s.avRing, { borderColor: hasStory ? NEON.pink : 'transparent' }]}>
                     {dp ? <Image source={{ uri: dp }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={18} color="#111827" /></View>}
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => router.push(`/user/${item.uid}` as any)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 14 }}>@{uname}</Text>
-                    {owner?.verified && <Ionicons name="checkmark-circle" size={14} color={BRAND} />}
-                  </TouchableOpacity>
+                  <View>
+                    <TouchableOpacity onPress={() => router.push(`/user/${item.uid}` as any)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Text style={{ color: c.text, fontWeight: '700', fontSize: 14 }}>@{uname}</Text>
+                      {owner?.verified && <Ionicons name="checkmark-circle" size={14} color={BRAND} />}
+                    </TouchableOpacity>
+                    {!!item.location && <Text style={{ color: c.muted, fontSize: 11 }}>{item.location}</Text>}
+                  </View>
                 </View>
                 <TouchableOpacity onPress={() => openPostOptions(item)} hitSlop={8}><Ionicons name="ellipsis-vertical" size={18} color={c.muted} /></TouchableOpacity>
               </View>
 
-              {item.mediaType === 'video' ? (
+              {mediaArr.length > 1 ? (
+                <View>
+                  <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
+                    {mediaArr.map((uri, idx) => (
+                      item.mediaTypes?.[idx] === 'video' ? (
+                        <PostVideo key={idx} uri={uri} active={item.id === activeId} focused={focused} onOpenReel={() => router.push(`/reels?startId=${item.id}` as any)} onDoubleTap={() => toggleLike(item, true)} />
+                      ) : (
+                        <DoubleTapHeartOverlay key={idx} onDoubleTap={() => toggleLike(item, true)}>
+                          <Image source={{ uri }} style={s.media} resizeMode="cover" />
+                        </DoubleTapHeartOverlay>
+                      )
+                    ))}
+                  </ScrollView>
+                  <View style={s.carBadge}><Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>{mediaArr.length} slides</Text></View>
+                </View>
+              ) : item.mediaType === 'video' ? (
                 <PostVideo uri={item.mediaUrl} active={item.id === activeId} focused={focused} onOpenReel={() => router.push(`/reels?startId=${item.id}` as any)} onDoubleTap={() => toggleLike(item, true)} />
               ) : (
                 <DoubleTapHeartOverlay onDoubleTap={() => toggleLike(item, true)}>
@@ -202,30 +227,22 @@ export default function HomeScreen() {
               <View style={s.actions}>
                 <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>
                   <AnimatedLikeButton liked={liked} onPress={() => toggleLike(item, false)} />
-                  <TouchableOpacity onPress={() => setCommentPost(item)}><Ionicons name="chatbubble-outline" size={23} color={c.text} /></TouchableOpacity>
-                  <RepostButton
-                    reposted={reposted}
-                    count={item.reposts?.length || 0}
-                    onPress={() => setRepostTarget(item)}
-                    onLongPressCount={() => setRepostersUids(item.reposts || [])}
-                  />
-                  <TouchableOpacity onPress={() => setSharePost(item)}><Ionicons name="paper-plane-outline" size={23} color={c.text} /></TouchableOpacity>
+                  {!item.commentsDisabled && <TouchableOpacity onPress={() => setCommentPost(item)}><Ionicons name="chatbubble-outline" size={23} color={c.text} /></TouchableOpacity>}
+                  {item.allowReshare !== false && (
+                    <RepostButton reposted={reposted} count={item.reposts?.length || 0} onPress={() => setRepostTarget(item)} onLongPressCount={() => setRepostersUids(item.reposts || [])} />
+                  )}
+                  {item.allowReshare !== false && <TouchableOpacity onPress={() => setSharePost(item)}><Ionicons name="paper-plane-outline" size={23} color={c.text} /></TouchableOpacity>}
                 </View>
-                <SaveButton
-                  saved={saved}
-                  size={23}
-                  onPress={() => toggleSave(item)}
-                  onLongPress={() => setSaveTarget(item)}
-                />
+                <SaveButton saved={saved} size={23} onPress={() => toggleSave(item)} onLongPress={() => setSaveTarget(item)} />
               </View>
 
               <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
-                <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>{formatLikesLabel(item.likes?.length || 0)}</Text>
-                {!!item.repostThoughts?.[uid] && (
-                  <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '600', marginTop: 2 }}>Your thought: "{item.repostThoughts[uid]}"</Text>
-                )}
+                <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>
+                  {item.hideLikeCount && item.uid !== uid ? 'Liked by others' : formatLikesLabel(item.likes?.length || 0)}
+                </Text>
+                {!!item.repostThoughts?.[uid] && <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '600', marginTop: 2 }}>Your thought: "{item.repostThoughts[uid]}"</Text>}
                 {!!item.caption && <Text style={{ color: c.text, marginTop: 3 }}><Text style={{ fontWeight: '700' }}>@{uname} </Text>{item.caption}</Text>}
-                {!!item.commentsCount && <TouchableOpacity onPress={() => setCommentPost(item)}><Text style={{ color: c.muted, fontSize: 12, marginTop: 3 }}>View all {item.commentsCount} comments</Text></TouchableOpacity>}
+                {!item.commentsDisabled && !!item.commentsCount && <TouchableOpacity onPress={() => setCommentPost(item)}><Text style={{ color: c.muted, fontSize: 12, marginTop: 3 }}>View all {item.commentsCount} comments</Text></TouchableOpacity>}
                 <Text style={{ color: c.muted, fontSize: 11, marginTop: 3 }}>{formatTime(item.createdAt)}</Text>
               </View>
             </View>
@@ -235,18 +252,21 @@ export default function HomeScreen() {
       <CommentModal postId={commentPost?.id || null} post={commentPost} onClose={() => setCommentPost(null)} />
       <ShareModal post={sharePost} onClose={() => setSharePost(null)} />
       <StoryViewerModal visible={!!storyList} stories={storyList || []} onClose={() => setStoryList(null)} onAddStory={() => {}} />
-      <RepostSheetModal
-        visible={!!repostTarget}
-        post={repostTarget}
-        myUid={uid}
-        onClose={() => setRepostTarget(null)}
-        onRepost={(th) => toggleRepost({ post: repostTarget, myUid: uid, me, owner: userMap[repostTarget.uid], thought: th })}
-        onSaveThought={(th) => saveRepostThought(repostTarget.id, uid, th)}
-        onRemoveRepost={() => toggleRepost({ post: repostTarget, myUid: uid, me, forceRemove: true })}
-        onOpenReposters={() => setRepostersUids(repostTarget.reposts || [])}
-      />
+      <RepostSheetModal visible={!!repostTarget} post={repostTarget} myUid={uid} onClose={() => setRepostTarget(null)} onRepost={(th) => toggleRepost({ post: repostTarget, myUid: uid, me, owner: userMap[repostTarget.uid], thought: th })} onSaveThought={(th) => saveRepostThought(repostTarget.id, uid, th)} onRemoveRepost={() => toggleRepost({ post: repostTarget, myUid: uid, me, forceRemove: true })} onOpenReposters={() => setRepostersUids(repostTarget.reposts || [])} />
       <RepostersModal visible={!!repostersUids} uids={repostersUids || []} me={me} myUid={uid} onClose={() => setRepostersUids(null)} />
       <SaveCollectionSheet visible={!!saveTarget} post={saveTarget} myUid={uid} me={me} onClose={() => setSaveTarget(null)} />
+
+      <Modal visible={!!editPost} transparent animationType="slide" onRequestClose={() => setEditPost(null)}>
+        <View style={s.eBg}><View style={[s.eCard, { backgroundColor: c.card }]}>
+          <Text style={{ color: c.text, fontWeight: '800', fontSize: 16 }}>Edit Post</Text>
+          <TextInput value={editCap} onChangeText={setEditCap} multiline placeholder="Caption..." placeholderTextColor={c.muted} style={[s.eInp, { backgroundColor: c.input, color: c.text }]} />
+          <TextInput value={editLoc} onChangeText={setEditLoc} placeholder="Location..." placeholderTextColor={c.muted} style={[s.eInp, { backgroundColor: c.input, color: c.text }]} />
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TouchableOpacity onPress={() => setEditPost(null)} style={[s.eBtn, { backgroundColor: c.input }]}><Text style={{ color: c.text, fontWeight: '700' }}>Cancel</Text></TouchableOpacity>
+            <TouchableOpacity onPress={async () => { const hashtags = Array.from(new Set((editCap.match(/#\w+/g) || []).map((h) => h.toLowerCase()))); await updatePublishedPost(editPost.id, { caption: editCap.trim(), location: editLoc.trim(), hashtags }); setEditPost(null); }} style={[s.eBtn, { backgroundColor: BRAND }]}><Text style={{ color: BRAND_TEXT, fontWeight: '800' }}>Save</Text></TouchableOpacity>
+          </View>
+        </View></View>
+      </Modal>
     </View>
   );
 }
@@ -258,7 +278,12 @@ const s = StyleSheet.create({
   av: { width: 32, height: 32, borderRadius: 16 },
   mediaWrap: { width: W, height: W * 1.15, backgroundColor: '#000' },
   media: { width: W, height: W * 1.15, backgroundColor: '#000' },
+  carBadge: { position: 'absolute', top: 12, right: 12, backgroundColor: 'rgba(0,0,0,0.65)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
   volBtn: { position: 'absolute', right: 12, bottom: 12, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', zIndex: 20, elevation: 20 },
   actions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
+  eBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
+  eCard: { borderRadius: 16, padding: 16, gap: 10 },
+  eInp: { borderRadius: 10, padding: 12 },
+  eBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
 });
         
