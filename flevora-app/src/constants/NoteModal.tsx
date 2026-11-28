@@ -1,214 +1,248 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Modal, TouchableOpacity, TextInput, FlatList, Image, ActivityIndicator, StyleSheet } from 'react-native';
+import {
+  View, Text, Modal, TouchableOpacity, TextInput, FlatList, Image,
+  ActivityIndicator, Alert, StyleSheet,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { doc, updateDoc, deleteField } from 'firebase/firestore';
+import * as ImagePicker from 'expo-image-picker';
+import { VideoView, useVideoPlayer } from 'expo-video';
+import { useRouter } from 'expo-router';
+import {
+  doc, setDoc, updateDoc, deleteDoc, addDoc, collection,
+  arrayUnion, deleteField, serverTimestamp,
+} from 'firebase/firestore';
 import { auth, db } from '../config';
-import { BRAND } from './theme';
+import { useTheme, BRAND, BRAND_TEXT } from './theme';
+import { useLang } from './i18n';
+import {
+  canViewNote, DEFAULT_NOTES_CAPABILITIES, detectNotesCapabilities,
+  isNoteExpired, NOTE_MAX_BYTES, NOTE_MAX_CHARS, NOTE_PROMPT_TEMPLATES,
+  NOTE_REPORT_CATEGORIES, NOTE_TTL_MS, notesT, toggleNoteLike, uploadNoteVideoToCloudinary,
+} from './notesCapabilities';
 
-const GIPHY_API_KEY = ''; // Paid/GIPHY key milne par yahan paste karein
-const TRACKS = [
-  { id: '1', title: 'Dil Ki Khamoshi', artist: 'Arijit Singh • 3:24', cat: 'For you' },
-  { id: '2', title: 'Teri Nazron Ki Sadiqay', artist: 'Zuhair • 2:53', cat: 'Trending' },
-  { id: '3', title: 'Shauq', artist: 'Amit Trivedi • 3:40', cat: 'Saved' },
-  { id: '4', title: 'Original Audio', artist: 'Flevora Mix • 0:30', cat: 'Original audio' },
-  { id: '5', title: 'Kesariya Lo-Fi', artist: 'Pritam • 2:45', cat: 'For you' },
-  { id: '6', title: 'Rani Teri', artist: 'Roshani • 1:50', cat: 'Trending' },
-];
+export { canViewNote as canSeeNote };
+
 const PLACES = ['Lucknow, India', 'New Delhi, India', 'Mumbai, India', 'Kanpur, India', 'Home', 'College'];
-const GIF_CATS = ['Trending', 'Love', 'Haha', 'Sad', 'Cool'];
-const FALLBACK_GIFS = [
-  { id: 'g1', emoji: '🥰', label: 'Love' }, { id: 'g2', emoji: '😂', label: 'Haha' },
-  { id: 'g3', emoji: '🔥', label: 'Fire' }, { id: 'g4', emoji: '💯', label: '100' },
-  { id: 'g5', emoji: '😎', label: 'Cool' }, { id: 'g6', emoji: '🥳', label: 'Party' },
-  { id: 'g7', emoji: '😢', label: 'Sad' }, { id: 'g8', emoji: '✨', label: 'Vibe' },
-];
 
-export const canSeeNote = (note: any, myUid: string, ownerUid: string, me: any) => {
-  if (!note || (note.expiresAt && note.expiresAt <= Date.now())) return false;
-  if (ownerUid === myUid) return true;
-  if (note.audience === 'closeFriends') return Array.isArray(note.allowedUids) && note.allowedUids.includes(myUid);
-  if (Array.isArray(note.allowedUids) && note.allowedUids.length > 0) return note.allowedUids.includes(myUid);
-  return Array.isArray(me?.following) && me.following.includes(ownerUid);
-};
-
-export function NoteModal({ visible, me, users, onClose }: { visible: boolean; me: any; users: any[]; onClose: () => void }) {
+export function NoteModal({ visible, me, users, activeNote, onClose }: { visible: boolean; me: any; users: any[]; activeNote?: any; onClose: () => void }) {
+  const { c } = useTheme();
+  const { lang } = useLang();
+  const L = notesT(lang);
   const uid = auth.currentUser?.uid || '';
-  const [tab, setTab] = useState<'main' | 'music' | 'location' | 'gif' | 'audience'>('main');
+
+  const [tab, setTab] = useState<'main' | 'prompt' | 'location' | 'audience'>('main');
   const [text, setText] = useState('');
-  const [music, setMusic] = useState<{ title: string; artist: string } | null>(null);
+  const [noteType, setNoteType] = useState<'text' | 'prompt'>('text');
+  const [promptQ, setPromptQ] = useState('');
   const [location, setLocation] = useState('');
-  const [gif, setGif] = useState('');
-  const [gifUrl, setGifUrl] = useState('');
-  const [giphyList, setGiphyList] = useState<any[]>([]);
-  const [gifLoading, setGifLoading] = useState(false);
-  const [gifCat, setGifCat] = useState('Trending');
+  const [videoUri, setVideoUri] = useState('');
   const [audience, setAudience] = useState<'friends' | 'closeFriends'>('friends');
-  const [selectedUids, setSelectedUids] = useState<string[]>([]);
+  const [caps, setCaps] = useState(DEFAULT_NOTES_CAPABILITIES);
   const [search, setSearch] = useState('');
-  const [musicCat, setMusicCat] = useState('For you');
+  const [busy, setBusy] = useState(false);
+  const [pct, setPct] = useState(0);
+
+  const player = useVideoPlayer(videoUri || '', (p) => { p.loop = true; p.muted = true; if (videoUri) p.play(); });
 
   useEffect(() => {
-    if (visible) {
-      const n = me?.note || {};
-      setText(n.text || ''); setMusic(n.music || null); setLocation(n.location || '');
-      setGif(n.gif || ''); setGifUrl(n.gifUrl || ''); setAudience(n.audience || 'friends');
-      setSelectedUids(Array.isArray(n.allowedUids) ? n.allowedUids : []);
-      setTab('main'); setSearch('');
+    if (!visible) return;
+    detectNotesCapabilities().then(setCaps);
+    const n = activeNote || {};
+    setText(n.text || '');
+    setNoteType(n.type === 'prompt' ? 'prompt' : 'text');
+    setPromptQ(n.promptQuestion || '');
+    setLocation(n.location || '');
+    setVideoUri(n.videoUrl || '');
+    setAudience(n.audience === 'closeFriends' ? 'closeFriends' : 'friends');
+    setTab('main'); setSearch(''); setBusy(false); setPct(0);
+  }, [visible, activeNote?.id]);
+
+  const atMatch = text.match(/@([a-zA-Z0-9_]*)$/);
+  const mentionSuggestions = atMatch
+    ? (users || []).filter((u) => u.id !== uid && (u.username || '').toLowerCase().includes(atMatch[1].toLowerCase()) && !(me?.blockedUsers || []).includes(u.id)).slice(0, 5)
+    : [];
+
+  const insertMention = (uname: string) => {
+    const next = text.replace(/@([a-zA-Z0-9_]*)$/, `@${uname} `).slice(0, NOTE_MAX_CHARS);
+    setText(next);
+  };
+
+  const recordVideoNote = async () => {
+    if (!caps.videoNotes) return;
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) return Alert.alert('Camera Permission', 'Allow camera access to record a short video note.');
+    const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['videos'], videoMaxDuration: 3, quality: 0.6 });
+    if (!res.canceled && res.assets[0]) {
+      const a = res.assets[0];
+      if (a.fileSize && a.fileSize > NOTE_MAX_BYTES) return Alert.alert('Too Large', 'Video must be under 25 MB.');
+      setVideoUri(a.uri);
     }
-  }, [visible]);
+  };
 
-  useEffect(() => {
-    if (tab !== 'gif' || !GIPHY_API_KEY) return;
-    setGifLoading(true);
-    const q = search.trim() || (gifCat === 'Trending' ? '' : gifCat);
-    const url = q
-      ? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(q)}&limit=20&rating=g`
-      : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=20&rating=g`;
-    fetch(url).then((r) => r.json()).then((j) => setGiphyList(j.data || [])).catch(() => setGiphyList([])).finally(() => setGifLoading(false));
-  }, [tab, search, gifCat]);
-
-  const canShare = !!(text.trim() || music || location || gif || gifUrl);
+  const canShare = !busy && !!(text.trim() || (noteType === 'prompt' && promptQ.trim()) || videoUri || location);
   const dp = me?.photoUrl || me?.avatar || '';
+  const cfIds: string[] = Array.isArray(me?.closeFriends) ? me.closeFriends : [];
 
   const saveNote = async () => {
     if (!uid || !canShare) return;
-    await updateDoc(doc(db, 'users', uid), {
-      note: {
-        text: text.trim(), music: music || null, location: location || '', gif: gif || '', gifUrl: gifUrl || '',
-        audience, allowedUids: audience === 'closeFriends' ? selectedUids : [], expiresAt: Date.now() + 86400000,
-      },
-    }).catch(() => {});
-    onClose();
+    setBusy(true);
+    try {
+      let finalVideoUrl = videoUri;
+      if (videoUri && !videoUri.startsWith('http')) {
+        finalVideoUrl = await uploadNoteVideoToCloudinary(videoUri, setPct);
+      }
+      const mentionNames = Array.from(new Set((text.match(/@([a-zA-Z0-9_]+)/g) || []).map((m) => m.slice(1).toLowerCase())));
+      const mentionedUids = (users || []).filter((u) => mentionNames.includes((u.username || '').toLowerCase())).map((u) => u.id);
+
+      await setDoc(doc(db, 'notes', uid), {
+        uid,
+        username: me?.username || 'user',
+        userPhoto: dp,
+        type: noteType,
+        promptQuestion: noteType === 'prompt' ? promptQ.trim() : '',
+        text: text.trim().slice(0, NOTE_MAX_CHARS),
+        location: location || '',
+        videoUrl: finalVideoUrl || '',
+        audience,
+        allowedUids: audience === 'closeFriends' ? cfIds : [],
+        mentions: mentionedUids,
+        likes: [],
+        promptResponses: [],
+        expiresAt: Date.now() + NOTE_TTL_MS,
+        createdAt: serverTimestamp(),
+      });
+      await updateDoc(doc(db, 'users', uid), { note: deleteField() }).catch(() => {});
+
+      for (const tid of mentionedUids) {
+        if (tid !== uid) {
+          await addDoc(collection(db, 'notifications'), {
+            toUid: tid, fromUid: uid, fromUsername: me?.username || 'user',
+            type: 'note_mention', noteId: uid, message: 'mentioned you in a note.',
+            read: false, createdAt: serverTimestamp(),
+          }).catch(() => {});
+        }
+      }
+      onClose();
+    } catch (e: any) {
+      Alert.alert('Failed', e?.message || 'Could not publish note.');
+    } finally {
+      setBusy(false); setPct(0);
+    }
   };
 
   const deleteNote = async () => {
     if (!uid) return;
+    await deleteDoc(doc(db, 'notes', uid)).catch(() => {});
     await updateDoc(doc(db, 'users', uid), { note: deleteField() }).catch(() => {});
     onClose();
   };
-
-  const toggleUser = (id: string) => setSelectedUids((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-
-  return (
+    return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={s.wrap}>
+      <View style={[s.wrap, { backgroundColor: c.background }]}>
         {tab === 'main' && (
           <>
             <View style={s.top}>
-              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={28} color="#111" /></TouchableOpacity>
-              {!!me?.note && <TouchableOpacity onPress={deleteNote}><Text style={{ color: '#EF4444', fontWeight: '700' }}>Delete note</Text></TouchableOpacity>}
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={28} color={c.text} /></TouchableOpacity>
+              <Text style={{ color: c.muted, fontWeight: '700', fontSize: 13 }}>{text.length}/{NOTE_MAX_CHARS}</Text>
+              {!!activeNote && <TouchableOpacity onPress={deleteNote}><Text style={{ color: '#EF4444', fontWeight: '700' }}>{L.deleteNote}</Text></TouchableOpacity>}
             </View>
+
             <View style={s.center}>
-              <View style={s.bubble}>
-                {!!gifUrl && <Image source={{ uri: gifUrl }} style={{ width: 96, height: 96, borderRadius: 12, alignSelf: 'center', marginBottom: 4 }} />}
-                {!!gif && !gifUrl && <Text style={{ fontSize: 24, textAlign: 'center', marginBottom: 2 }}>{gif}</Text>}
-                <TextInput value={text} onChangeText={setText} placeholder="Share a thought..." placeholderTextColor="#999" maxLength={60} style={s.input} />
+              <View style={[s.bubble, { backgroundColor: c.card, borderColor: c.border, borderWidth: 1 }]}>
+                {noteType === 'prompt' && !!promptQ && <Text style={{ color: BRAND, fontWeight: '800', fontSize: 12, textAlign: 'center', marginBottom: 4 }}>{promptQ}</Text>}
+                <TextInput value={text} onChangeText={setText} placeholder={L.shareThought} placeholderTextColor={c.muted} maxLength={NOTE_MAX_CHARS} multiline style={[s.input, { color: c.text }]} />
               </View>
-              <View style={s.tail} />
-              {dp ? <Image source={{ uri: dp }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={38} color="#fff" /></View>}
-              {!!music && <TouchableOpacity onPress={() => setMusic(null)} style={s.tagPill}><Ionicons name="musical-notes" size={14} color="#EC4899" /><Text style={s.tagTxt}>{music.title} ×</Text></TouchableOpacity>}
-              {!!location && <TouchableOpacity onPress={() => setLocation('')} style={s.tagPill}><Ionicons name="location" size={14} color={BRAND} /><Text style={s.tagTxt}>{location} ×</Text></TouchableOpacity>}
+              <View style={[s.tail, { backgroundColor: c.card }]} />
+              {videoUri ? (
+                <TouchableOpacity onLongPress={() => setVideoUri('')}>
+                  <VideoView player={player} style={s.av} contentFit="cover" nativeControls={false} />
+                </TouchableOpacity>
+              ) : dp ? (
+                <Image source={{ uri: dp }} style={s.av} />
+              ) : (
+                <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={38} color={BRAND_TEXT} /></View>
+              )}
+
+              {mentionSuggestions.length > 0 && (
+                <View style={[s.mBox, { backgroundColor: c.card, borderColor: c.border }]}>
+                  {mentionSuggestions.map((u) => (
+                    <TouchableOpacity key={u.id} style={s.mRow} onPress={() => insertMention(u.username)}>
+                      <Text style={{ color: c.text, fontWeight: '700' }}>@{u.username}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {!!location && <TouchableOpacity onPress={() => setLocation('')} style={[s.tagPill, { backgroundColor: c.input }]}><Ionicons name="location" size={14} color={BRAND} /><Text style={{ color: c.text, fontSize: 12, fontWeight: '700' }}>{location} ×</Text></TouchableOpacity>}
+
               <View style={s.iconRow}>
-                <TouchableOpacity onPress={() => { setSearch(''); setTab('music'); }} style={s.toolBtn}><Ionicons name="musical-notes" size={22} color="#EC4899" /></TouchableOpacity>
-                <TouchableOpacity onPress={() => { setSearch(''); setTab('location'); }} style={s.toolBtn}><Ionicons name="location" size={22} color={BRAND} /></TouchableOpacity>
-                <TouchableOpacity onPress={() => { setSearch(''); setTab('gif'); }} style={s.toolBtn}><Text style={{ color: '#10B981', fontWeight: '900', fontSize: 12 }}>GIF</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => setTab('prompt')} style={[s.toolBtn, { backgroundColor: c.input }]}><Ionicons name="help-circle-outline" size={22} color={BRAND} /></TouchableOpacity>
+                <TouchableOpacity onPress={recordVideoNote} style={[s.toolBtn, { backgroundColor: c.input }]}><Ionicons name="videocam-outline" size={22} color={c.text} /></TouchableOpacity>
+                <TouchableOpacity onPress={() => setTab('location')} style={[s.toolBtn, { backgroundColor: c.input }]}><Ionicons name="location-outline" size={22} color={c.text} /></TouchableOpacity>
+                <TouchableOpacity onPress={() => Alert.alert('Music Unavailable', L.musicUnavailable)} style={[s.toolBtn, { backgroundColor: c.input, opacity: 0.5 }]}><Ionicons name="musical-notes-outline" size={20} color={c.muted} /></TouchableOpacity>
+                <TouchableOpacity onPress={() => Alert.alert('GIF Unavailable', L.gifUnavailable)} style={[s.toolBtn, { backgroundColor: c.input, opacity: 0.5 }]}><Text style={{ color: c.muted, fontWeight: '900', fontSize: 11 }}>GIF</Text></TouchableOpacity>
               </View>
+              {busy && <Text style={{ color: BRAND, fontWeight: '700', marginTop: 10 }}>Publishing{pct ? ` ${pct}%` : '...'}</Text>}
             </View>
+
             <View style={s.bottom}>
               <TouchableOpacity onPress={() => setTab('audience')} style={s.audBtn}>
-                <Ionicons name={audience === 'closeFriends' ? 'star' : 'people'} size={18} color={audience === 'closeFriends' ? '#10B981' : '#111'} />
-                <Text style={{ fontWeight: '700', color: '#111' }}>{audience === 'closeFriends' ? `Close Friends (${selectedUids.length})` : 'Share with friends'}</Text>
-                <Ionicons name="chevron-forward" size={16} color="#555" />
+                <Ionicons name={audience === 'closeFriends' ? 'star' : 'people'} size={18} color={audience === 'closeFriends' ? '#10B981' : c.text} />
+                <Text style={{ fontWeight: '700', color: c.text, fontSize: 13 }}>{audience === 'closeFriends' ? `${L.closeFriends} (${cfIds.length})` : L.mutualFollowers}</Text>
+                <Ionicons name="chevron-forward" size={16} color={c.muted} />
               </TouchableOpacity>
-              <TouchableOpacity onPress={saveNote} disabled={!canShare} style={[s.shareBtn, { opacity: canShare ? 1 : 0.4 }]}><Text style={{ color: '#fff', fontWeight: '700' }}>Share</Text></TouchableOpacity>
+              <TouchableOpacity onPress={saveNote} disabled={!canShare} style={[s.shareBtn, { opacity: canShare ? 1 : 0.4 }]}>
+                {busy ? <ActivityIndicator size="small" color={BRAND_TEXT} /> : <Text style={{ color: BRAND_TEXT, fontWeight: '800' }}>{L.share}</Text>}
+              </TouchableOpacity>
             </View>
           </>
         )}
 
-        {tab === 'music' && (
-          <View style={s.sub}>
-            <View style={s.subHead}><TouchableOpacity onPress={() => setTab('main')}><Ionicons name="arrow-back" size={24} /></TouchableOpacity><Text style={s.subTitle}>Select Music</Text><View style={{ width: 24 }} /></View>
-            <TextInput value={search} onChangeText={setSearch} placeholder="Search music..." style={s.searchBox} />
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
-              {['For you', 'Trending', 'Saved', 'Original audio'].map((c) => (
-                <TouchableOpacity key={c} onPress={() => setMusicCat(c)} style={[s.catPill, musicCat === c && { backgroundColor: '#111' }]}><Text style={{ color: musicCat === c ? '#fff' : '#333', fontSize: 12, fontWeight: '700' }}>{c}</Text></TouchableOpacity>
-              ))}
-            </View>
-            <FlatList data={TRACKS.filter((t) => (search ? t.title.toLowerCase().includes(search.toLowerCase()) : t.cat === musicCat))} keyExtractor={(i) => i.id} renderItem={({ item }) => (
-              <TouchableOpacity style={s.listRow} onPress={() => { setMusic({ title: item.title, artist: item.artist }); setTab('main'); }}>
-                <Ionicons name="musical-notes" size={22} color="#EC4899" /><View><Text style={{ fontWeight: '700' }}>{item.title}</Text><Text style={{ color: '#666', fontSize: 12 }}>{item.artist}</Text></View>
+        {tab === 'prompt' && (
+          <View style={{ flex: 1 }}>
+            <View style={s.subHead}><TouchableOpacity onPress={() => setTab('main')}><Ionicons name="arrow-back" size={24} color={c.text} /></TouchableOpacity><Text style={[s.subTitle, { color: c.text }]}>Prompt Note</Text><View style={{ width: 24 }} /></View>
+            <TextInput value={promptQ} onChangeText={setPromptQ} placeholder="Write custom prompt..." placeholderTextColor={c.muted} maxLength={60} style={[s.searchBox, { backgroundColor: c.input, color: c.text }]} />
+            {NOTE_PROMPT_TEMPLATES.map((tpl) => (
+              <TouchableOpacity key={tpl} style={[s.listRow, { borderBottomColor: c.border }]} onPress={() => { setNoteType('prompt'); setPromptQ(tpl); setTab('main'); }}>
+                <Ionicons name="sparkles-outline" size={20} color={BRAND} /><Text style={{ color: c.text, fontWeight: '600' }}>{tpl}</Text>
               </TouchableOpacity>
-            )} />
+            ))}
+            {!!promptQ.trim() && (
+              <TouchableOpacity style={[s.shareBtn, { marginTop: 14, alignItems: 'center' }]} onPress={() => { setNoteType('prompt'); setTab('main'); }}>
+                <Text style={{ color: BRAND_TEXT, fontWeight: '800' }}>Use Custom Prompt</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
         {tab === 'location' && (
-          <View style={s.sub}>
-            <View style={s.subHead}><TouchableOpacity onPress={() => setTab('main')}><Ionicons name="arrow-back" size={24} /></TouchableOpacity><Text style={s.subTitle}>Choose Location</Text><View style={{ width: 24 }} /></View>
-            <TextInput value={search} onChangeText={setSearch} placeholder="Type or search location..." style={s.searchBox} />
-            {!!search.trim() && <TouchableOpacity style={s.listRow} onPress={() => { setLocation(search.trim()); setTab('main'); }}><Ionicons name="add-circle" size={22} color={BRAND} /><Text style={{ fontWeight: '700' }}>Use "{search.trim()}"</Text></TouchableOpacity>}
+          <View style={{ flex: 1 }}>
+            <View style={s.subHead}><TouchableOpacity onPress={() => setTab('main')}><Ionicons name="arrow-back" size={24} color={c.text} /></TouchableOpacity><Text style={[s.subTitle, { color: c.text }]}>Location</Text><View style={{ width: 24 }} /></View>
+            <TextInput value={search} onChangeText={setSearch} placeholder="Type city or place..." placeholderTextColor={c.muted} style={[s.searchBox, { backgroundColor: c.input, color: c.text }]} />
+            {!!search.trim() && <TouchableOpacity style={[s.listRow, { borderBottomColor: c.border }]} onPress={() => { setLocation(search.trim()); setTab('main'); }}><Ionicons name="add-circle" size={22} color={BRAND} /><Text style={{ color: c.text, fontWeight: '700' }}>Use "{search.trim()}"</Text></TouchableOpacity>}
             <FlatList data={PLACES.filter((p) => p.toLowerCase().includes(search.toLowerCase()))} keyExtractor={(i) => i} renderItem={({ item }) => (
-              <TouchableOpacity style={s.listRow} onPress={() => { setLocation(item); setTab('main'); }}><Ionicons name="location" size={20} color={BRAND} /><Text style={{ fontWeight: '600' }}>{item}</Text></TouchableOpacity>
+              <TouchableOpacity style={[s.listRow, { borderBottomColor: c.border }]} onPress={() => { setLocation(item); setTab('main'); }}><Ionicons name="location" size={20} color={BRAND} /><Text style={{ color: c.text, fontWeight: '600' }}>{item}</Text></TouchableOpacity>
             )} />
           </View>
         )}
 
-        {tab === 'gif' && (
-          <View style={s.sub}>
-            <View style={s.subHead}><TouchableOpacity onPress={() => setTab('main')}><Ionicons name="arrow-back" size={24} /></TouchableOpacity><Text style={s.subTitle}>Search GIPHY</Text><View style={{ width: 24 }} /></View>
-            <TextInput value={search} onChangeText={setSearch} placeholder="Search GIPHY..." style={s.searchBox} />
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
-              {GIF_CATS.map((c) => (
-                <TouchableOpacity key={c} onPress={() => setGifCat(c)} style={[s.catPill, gifCat === c && { backgroundColor: '#111' }]}><Text style={{ color: gifCat === c ? '#fff' : '#333', fontSize: 12, fontWeight: '700' }}>{c}</Text></TouchableOpacity>
-              ))}
-            </View>
-            {GIPHY_API_KEY ? (
-              gifLoading ? <ActivityIndicator size="large" color={BRAND} style={{ marginTop: 30 }} /> : (
-                <FlatList numColumns={2} data={giphyList} keyExtractor={(i) => i.id} renderItem={({ item }) => (
-                  <TouchableOpacity style={s.giphyBox} onPress={() => { setGifUrl(item.images?.fixed_height?.url || ''); setGif(''); setTab('main'); }}>
-                    <Image source={{ uri: item.images?.fixed_height_small?.url }} style={{ width: '100%', height: 120, borderRadius: 10 }} />
-                  </TouchableOpacity>
-                )} />
-              )
-            ) : (
-              <>
-                <Text style={{ color: '#666', fontSize: 12, marginBottom: 10 }}>Live GIPHY search ke liye GIPHY_API_KEY add karein — tab tak reaction stickers use karein:</Text>
-                <FlatList numColumns={4} data={FALLBACK_GIFS.filter((g) => g.label.toLowerCase().includes(search.toLowerCase()))} keyExtractor={(i) => i.id} renderItem={({ item }) => (
-                  <TouchableOpacity style={s.gifCell} onPress={() => { setGif(item.emoji); setGifUrl(''); setTab('main'); }}>
-                    <Text style={{ fontSize: 34 }}>{item.emoji}</Text><Text style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{item.label}</Text>
-                  </TouchableOpacity>
-                )} />
-              </>
-            )}
-          </View>
-        )}
-
         {tab === 'audience' && (
-          <View style={s.sub}>
+          <View style={{ flex: 1 }}>
             <View style={s.subHead}>
-              <TouchableOpacity onPress={() => setTab('main')}><Text style={{ fontSize: 15, color: '#555' }}>Cancel</Text></TouchableOpacity>
-              <Text style={s.subTitle}>Share with</Text>
-              <TouchableOpacity onPress={() => setTab('main')}><Text style={{ fontSize: 15, fontWeight: '800', color: BRAND }}>Done</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setTab('main')}><Text style={{ color: c.muted, fontSize: 15 }}>Back</Text></TouchableOpacity>
+              <Text style={[s.subTitle, { color: c.text }]}>Share with</Text>
+              <TouchableOpacity onPress={() => setTab('main')}><Text style={{ color: BRAND, fontWeight: '800', fontSize: 15 }}>Done</Text></TouchableOpacity>
             </View>
-            <TouchableOpacity style={s.listRow} onPress={() => setAudience('friends')}>
-              <Ionicons name="people-circle" size={32} color="#111" /><View style={{ flex: 1 }}><Text style={{ fontWeight: '700' }}>Friends</Text><Text style={{ color: '#666', fontSize: 12 }}>Followers you follow back</Text></View>
+            <TouchableOpacity style={[s.listRow, { borderBottomColor: c.border }]} onPress={() => setAudience('friends')}>
+              <Ionicons name="people-circle" size={32} color={c.text} />
+              <View style={{ flex: 1 }}><Text style={{ color: c.text, fontWeight: '700' }}>{L.mutualFollowers}</Text><Text style={{ color: c.muted, fontSize: 12 }}>Only mutual followers</Text></View>
               <Ionicons name={audience === 'friends' ? 'radio-button-on' : 'radio-button-off'} size={22} color={BRAND} />
             </TouchableOpacity>
-            <TouchableOpacity style={s.listRow} onPress={() => setAudience('closeFriends')}>
-              <Ionicons name="star-circle" size={32} color="#10B981" /><View style={{ flex: 1 }}><Text style={{ fontWeight: '700' }}>Close Friends</Text><Text style={{ color: '#666', fontSize: 12 }}>Only selected people ({selectedUids.length})</Text></View>
+            <TouchableOpacity style={[s.listRow, { borderBottomColor: c.border }]} onPress={() => setAudience('closeFriends')}>
+              <Ionicons name="star-circle" size={32} color="#10B981" />
+              <View style={{ flex: 1 }}><Text style={{ color: c.text, fontWeight: '700' }}>{L.closeFriends}</Text><Text style={{ color: c.muted, fontSize: 12 }}>Uses your Close Friends list ({cfIds.length} people)</Text></View>
               <Ionicons name={audience === 'closeFriends' ? 'radio-button-on' : 'radio-button-off'} size={22} color="#10B981" />
             </TouchableOpacity>
-            {audience === 'closeFriends' && (
-              <FlatList data={users} keyExtractor={(u) => u.id} renderItem={({ item }) => {
-                const picked = selectedUids.includes(item.id);
-                return (
-                  <TouchableOpacity style={s.listRow} onPress={() => toggleUser(item.id)}>
-                    <Text style={{ flex: 1, fontWeight: '600' }}>@{item.username || 'user'}</Text>
-                    <Ionicons name={picked ? 'checkbox' : 'square-outline'} size={22} color={picked ? BRAND : '#888'} />
-                  </TouchableOpacity>
-                );
-              }} />
-            )}
           </View>
         )}
       </View>
@@ -216,28 +250,150 @@ export function NoteModal({ visible, me, users, onClose }: { visible: boolean; m
   );
 }
 
+export function NoteDetailModal({
+  visible, note, owner, me, myUid, allUsers = [], onReplyDm, onEditOwn, onClose,
+}: any) {
+  const { c } = useTheme();
+  const { lang } = useLang();
+  const router = useRouter();
+  const L = notesT(lang);
+  const [reply, setReply] = useState('');
+  const [promptAns, setPromptAns] = useState('');
+  const [showLikes, setShowLikes] = useState(false);
+
+  if (!visible || !note) return null;
+  if (isNoteExpired(note)) {
+    return (
+      <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+        <TouchableOpacity style={s.dBg} activeOpacity={1} onPress={onClose}>
+          <View style={[s.dCard, { backgroundColor: c.card }]}><Text style={{ color: c.text, fontWeight: '700', textAlign: 'center' }}>{L.expired}</Text></View>
+        </TouchableOpacity>
+      </Modal>
+    );
+  }
+
+  const isOwn = note.uid === myUid;
+  const likes: string[] = Array.isArray(note.likes) ? note.likes : [];
+  const liked = likes.includes(myUid);
+  const resps: any[] = Array.isArray(note.promptResponses) ? note.promptResponses : [];
+  const isMuted = Array.isArray(me?.mutedNotes) && me.mutedNotes.includes(note.uid);
+
+  const sendPromptAnswer = async () => {
+    if (!myUid || !promptAns.trim()) return;
+    await updateDoc(doc(db, 'notes', note.id || note.uid), {
+      promptResponses: arrayUnion({ id: `pr_${Date.now()}`, uid: myUid, username: me?.username || 'user', text: promptAns.trim() }),
+    }).catch(() => {});
+    setPromptAns('');
+    Alert.alert('Sent', 'Response sent privately to the creator.');
+  };
+
+  const openMore = () => {
+    if (isOwn) {
+      Alert.alert('Your Note', undefined, [
+        { text: 'Replace Note', onPress: () => { onClose(); onEditOwn?.(); } },
+        { text: `View Likes (${likes.length})`, onPress: () => setShowLikes((v) => !v) },
+        { text: L.deleteNote, style: 'destructive', onPress: async () => { await deleteDoc(doc(db, 'notes', note.id || myUid)); onClose(); } },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    } else {
+      Alert.alert(`@${owner?.username || note.username}`, undefined, [
+        { text: L.visitProfile, onPress: () => { onClose(); router.push(`/user/${note.uid}` as any); } },
+        { text: isMuted ? L.unmuteNotes : L.muteNotes, onPress: async () => { await updateDoc(doc(db, 'users', myUid), { mutedNotes: isMuted ? arrayUnion() : arrayUnion(note.uid) }); onClose(); } },
+        {
+          text: L.reportNote, style: 'destructive',
+          onPress: () => Alert.alert('Report Category', 'Select reason:', [
+            ...NOTE_REPORT_CATEGORIES.slice(0, 4).map((cat) => ({
+              text: cat, onPress: () => addDoc(collection(db, 'reports'), { noteId: note.id || note.uid, targetUid: note.uid, type: 'note', reason: cat, status: 'pending', reportedBy: myUid, reporterUid: myUid, createdAt: serverTimestamp() }),
+            })),
+            { text: 'Cancel', style: 'cancel' },
+          ]),
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity style={s.dBg} activeOpacity={1} onPress={onClose}>
+        <TouchableOpacity activeOpacity={1} style={[s.dCard, { backgroundColor: c.card }]}>
+          <View style={s.dHead}>
+            <Text style={{ color: c.text, fontWeight: '800', fontSize: 16 }}>@{owner?.username || note.username || 'user'}</Text>
+            <TouchableOpacity onPress={openMore}><Ionicons name="ellipsis-horizontal" size={22} color={c.text} /></TouchableOpacity>
+          </View>
+          {note.type === 'prompt' && !!note.promptQuestion && <Text style={{ color: BRAND, fontWeight: '800', fontSize: 13 }}>{note.promptQuestion}</Text>}
+          {!!note.text && <Text style={{ color: c.text, fontSize: 17, fontWeight: '700' }}>{note.text}</Text>}
+          {!!note.location && <Text style={{ color: c.muted, fontSize: 12 }}>📍 {note.location}</Text>}
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <TouchableOpacity onPress={() => toggleNoteLike(note, myUid, me)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? '#EF4444' : c.text} />
+              <Text style={{ color: c.text, fontWeight: '700' }}>{likes.length}</Text>
+            </TouchableOpacity>
+            {isOwn && note.type === 'prompt' && <Text style={{ color: c.muted, fontSize: 12 }}>{resps.length} responses</Text>}
+          </View>
+
+          {isOwn && showLikes && likes.length > 0 && (
+            <View style={{ maxHeight: 120 }}>
+              {likes.map((lid) => {
+                const u = allUsers.find((x: any) => x.id === lid);
+                return <Text key={lid} style={{ color: c.muted, fontSize: 12 }}>❤️ @{u?.username || lid.slice(0, 6)}</Text>;
+              })}
+            </View>
+          )}
+
+          {isOwn && note.type === 'prompt' && resps.length > 0 && (
+            <View style={{ gap: 6 }}>
+              {resps.slice(0, 5).map((r) => (
+                <TouchableOpacity key={r.id} onPress={() => { onClose(); onReplyDm?.(r.uid, r.username, `Replied to your prompt answer: "${r.text}"`); }} style={{ backgroundColor: c.input, padding: 8, borderRadius: 8 }}>
+                  <Text style={{ color: c.text, fontSize: 12 }}><Text style={{ fontWeight: '800' }}>@{r.username}: </Text>{r.text}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {!isOwn && note.type === 'prompt' && (
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TextInput value={promptAns} onChangeText={setPromptAns} placeholder="Answer prompt..." placeholderTextColor={c.muted} style={[s.dInp, { backgroundColor: c.input, color: c.text }]} />
+              <TouchableOpacity onPress={sendPromptAnswer} style={{ backgroundColor: BRAND, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 10 }}><Text style={{ color: BRAND_TEXT, fontWeight: '800' }}>Send</Text></TouchableOpacity>
+            </View>
+          )}
+
+          {!isOwn && (
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TextInput value={reply} onChangeText={setReply} placeholder={L.replyPlaceholder} placeholderTextColor={c.muted} style={[s.dInp, { backgroundColor: c.input, color: c.text }]} />
+              <TouchableOpacity onPress={() => { if (reply.trim()) { onReplyDm?.(note.uid, owner?.username || note.username, reply.trim(), note); setReply(''); onClose(); } }} style={{ backgroundColor: BRAND, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 10 }}><Ionicons name="send" size={18} color={BRAND_TEXT} /></TouchableOpacity>
+            </View>
+          )}
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: '#fff', justifyContent: 'space-between', paddingTop: 48, paddingBottom: 22, paddingHorizontal: 16 },
+  wrap: { flex: 1, justifyContent: 'space-between', paddingTop: 48, paddingBottom: 22, paddingHorizontal: 16 },
   top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   center: { alignItems: 'center' },
-  bubble: { backgroundColor: '#F3F4F6', borderRadius: 22, paddingHorizontal: 18, paddingVertical: 12, minWidth: 160, maxWidth: '82%' },
-  input: { fontSize: 15, fontWeight: '600', textAlign: 'center', color: '#111', padding: 0 },
-  tail: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#F3F4F6', marginTop: -4, marginBottom: 4 },
-  av: { width: 88, height: 88, borderRadius: 44 },
-  tagPill: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10, backgroundColor: '#F3F4F6', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 16 },
-  tagTxt: { fontSize: 12, fontWeight: '700', color: '#111' },
-  iconRow: { flexDirection: 'row', gap: 14, marginTop: 16 },
-  toolBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center' },
+  bubble: { borderRadius: 22, paddingHorizontal: 18, paddingVertical: 12, minWidth: 160, maxWidth: '85%' },
+  input: { fontSize: 15, fontWeight: '600', textAlign: 'center', padding: 0 },
+  tail: { width: 12, height: 12, borderRadius: 6, marginTop: -4, marginBottom: 4 },
+  av: { width: 88, height: 88, borderRadius: 44, overflow: 'hidden' },
+  mBox: { width: '80%', borderWidth: 1, borderRadius: 12, marginTop: 8 },
+  mRow: { padding: 10 },
+  tagPill: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 16 },
+  iconRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  toolBtn: { width: 42, height: 42, borderRadius: 21, justifyContent: 'center', alignItems: 'center' },
   bottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   audBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   shareBtn: { backgroundColor: BRAND, paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 },
-  sub: { flex: 1 },
   subHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   subTitle: { fontSize: 17, fontWeight: '800' },
-  searchBox: { backgroundColor: '#F3F4F6', borderRadius: 12, padding: 11, marginBottom: 12 },
-  catPill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: '#F3F4F6' },
-  listRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: '#eee' },
-  giphyBox: { flex: 1, padding: 4 },
-  gifCell: { flex: 1, alignItems: 'center', paddingVertical: 16 },
+  searchBox: { borderRadius: 12, padding: 11, marginBottom: 12 },
+  listRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 0.5 },
+  dBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 },
+  dCard: { borderRadius: 20, padding: 18, gap: 12 },
+  dHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  dInp: { flex: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 },
 });
-                               
+              
