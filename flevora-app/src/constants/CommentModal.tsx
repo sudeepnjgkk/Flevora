@@ -206,6 +206,7 @@ export function CommentModal({ postId, post, onClose }: { postId: string | null;
       if ((me.blockedUsers || []).includes(cm.uid) || (usersMap[cm.uid]?.blockedUsers || []).includes(uid)) return false;
       if (cm.isHidden && !isPostOwner) return false;
       if (cm.isHidden && isPostOwner && !showHidden) return false;
+            if (Array.isArray(me.hiddenWords) && me.hiddenWords.some((w: string) => w && (cm.text || '').toLowerCase().includes(w.toLowerCase()))) return false;
       return true;
     });
     return [...filtered].sort((a, b) => {
