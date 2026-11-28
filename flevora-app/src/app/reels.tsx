@@ -1,9 +1,15 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Pressable, Image, Alert, StyleSheet, Dimensions } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View, Text, FlatList, TouchableOpacity, Pressable, Image, Alert,
+  StyleSheet, Dimensions, ActivityIndicator, AppState, Share,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, deleteField } from 'firebase/firestore';
+import {
+  collection, query, where, orderBy, onSnapshot, doc, updateDoc, deleteDoc,
+  arrayUnion, arrayRemove, deleteField, serverTimestamp,
+} from 'firebase/firestore';
 import { auth, db } from '../config';
 import { CommentModal } from '../constants/CommentModal';
 import { ShareModal } from '../constants/ShareModal';
@@ -12,7 +18,11 @@ import {
   AboutReelModal, AskFlevoraAIModal, AudioDetailModal, RemixSequenceModal,
   WhySeeingModal, NotInterestedModal, ReportReelModal,
 } from '../constants/ReelMoreModals';
-import { canViewReel, saveReelInterest } from '../constants/reelOptionsSystem';
+import { ReelInsightsModal, ReelOwnerEditModal } from '../constants/ReelsPart2Modals';
+import { getAudioMeta, saveReelInterest } from '../constants/reelOptionsSystem';
+import {
+  canViewReelExtended, rankReelsForYou, recordDeduplicatedReelView, REEL_FILTERS,
+} from '../constants/reelsSystem';
 import { BRAND, NEON } from '../constants/theme';
 import { AnimatedLikeButton } from '../constants/LikeComponents';
 import { formatLikeCount, togglePostLike } from '../constants/likeSystem';
@@ -22,13 +32,17 @@ import { toggleSavePost } from '../constants/saveSystem';
 const H = Dimensions.get('window').height - 56;
 
 function ReelItem({
-  item, active, focused, me, owner, autoScroll, onToggleAutoScroll, onNextReel,
+  item, active, focused, appActive, me, owner, autoScroll, onToggleAutoScroll, onNextReel,
   onComment, onShare, onLikes, onRepostToast, onSaveSheet, onOpenMoreModal, onInterested,
+  onHideCreator, onArchiveReel, onDeleteReel,
 }: any) {
   const router = useRouter();
   const uid = auth.currentUser?.uid || '';
   const [paused, setPaused] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [buffering, setBuffering] = useState(true);
+  const [videoErr, setVideoErr] = useState(false);
+  const [progressRatio, setProgressRatio] = useState(0);
   const [liked, setLiked] = useState(Array.isArray(item.likes) && item.likes.includes(uid));
   const [likeCount, setLikeCount] = useState(Array.isArray(item.likes) ? item.likes.length : 0);
   const [reposted, setReposted] = useState(Array.isArray(item.reposts) && item.reposts.includes(uid));
@@ -38,7 +52,7 @@ function ReelItem({
   const [optOpen, setOptOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [captions, setCaptions] = useState(false);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeed] = useState(item.playbackSpeed || 1);
   const [speedLocked, setSpeedLocked] = useState(false);
   const [holdHint, setHoldHint] = useState('');
   const [heartPop, setHeartPop] = useState(false);
@@ -49,8 +63,13 @@ function ReelItem({
   const startY = useRef(0);
   const lockedRef = useRef(false);
   const holdingRef = useRef(false);
+  const viewedRef = useRef(false);
 
-  const player = useVideoPlayer(item.mediaUrl, (p) => { p.loop = !autoScroll; p.preservesPitch = true; });
+  const player = useVideoPlayer(item.mediaUrl, (p) => {
+    p.loop = !autoScroll;
+    p.preservesPitch = true;
+    p.timeUpdateEventInterval = 0.5;
+  });
 
   useEffect(() => {
     setLiked(Array.isArray(item.likes) && item.likes.includes(uid));
@@ -63,7 +82,23 @@ function ReelItem({
     setSaved(Array.isArray(me?.savedPosts) && me.savedPosts.includes(item.id));
   }, [me?.savedPosts, item.id]);
 
-  useEffect(() => { if (!active) { setSpeed(1); setSpeedLocked(false); } }, [active]);
+  useEffect(() => {
+    const s1 = player.addListener('statusChange', ({ status }) => {
+      setBuffering(status === 'loading');
+      setVideoErr(status === 'error');
+    });
+    const s2 = player.addListener('timeUpdate', ({ currentTime }) => {
+      const dur = player.duration || item.duration || 1;
+      setProgressRatio(Math.min(1, Math.max(0, currentTime / dur)));
+      if (!viewedRef.current && currentTime >= 2 && active && focused && appActive) {
+        viewedRef.current = true;
+        recordDeduplicatedReelView(item.id, uid, item.uid);
+      }
+    });
+    return () => { s1.remove(); s2.remove(); };
+  }, [player, active, focused, appActive, item.id, item.uid, item.duration, uid]);
+
+  useEffect(() => { if (!active) { setSpeed(item.playbackSpeed || 1); setSpeedLocked(false); } }, [active]);
   useEffect(() => { player.loop = !autoScroll; }, [autoScroll]);
   useEffect(() => { player.playbackRate = speed; }, [speed]);
   useEffect(() => { player.muted = muted; }, [muted]);
@@ -74,15 +109,18 @@ function ReelItem({
   }, [autoScroll, active, focused]);
 
   useEffect(() => {
-    if (focused && active && !paused) { player.play(); updateDoc(doc(db, 'posts', item.id), { views: increment(1) }).catch(() => {}); }
+    if (focused && appActive && active && !paused) player.play();
     else player.pause();
-  }, [focused, active, paused]);
+  }, [focused, appActive, active, paused]);
 
+  const isOwner = !!uid && item.uid === uid;
   const following = Array.isArray(me?.following) && me.following.includes(item.uid);
   const isInterested = Array.isArray(me?.interestedPosts) && me.interestedPosts.includes(item.id);
   const myThought = item.repostThoughts?.[uid] || '';
   const myAv = me?.photoUrl || me?.avatar || '';
   const ownerAv = owner?.photoUrl || owner?.avatar || item.avatar || '';
+  const audioMeta = getAudioMeta(item, owner);
+  const filterPreset = REEL_FILTERS.find((f) => f.name === item.filter);
 
   const triggerLike = (forceLike = false) => {
     if (forceLike) { setHeartPop(true); setTimeout(() => setHeartPop(false), 650); }
@@ -141,6 +179,7 @@ function ReelItem({
 
   const toggleRepost = async () => {
     if (!uid) return;
+    if (item.allowRepost === false && !isOwner) return Alert.alert('Disabled', 'Reposting is turned off for this Reel.');
     const next = !reposted; setReposted(next); setRepostCount((c) => Math.max(0, c + (next ? 1 : -1)));
     try {
       if (next) { await updateDoc(doc(db, 'posts', item.id), { reposts: arrayUnion(uid) }); onRepostToast(item.id); }
@@ -156,14 +195,41 @@ function ReelItem({
     await updateDoc(doc(db, 'users', uid), { following: following ? arrayRemove(item.uid) : arrayUnion(item.uid) }).catch(() => {});
     await updateDoc(doc(db, 'users', item.uid), { followers: following ? arrayRemove(uid) : arrayUnion(uid) }).catch(() => {});
   };
+
+  const renderCaption = (txt: string) => (
+    <Text style={s.capTxt} numberOfLines={2}>
+      {txt.split(/([@#][a-zA-Z0-9._]+)/g).map((part, idx) =>
+        part.startsWith('#') ? (
+          <Text key={idx} style={{ color: BRAND, fontWeight: '700' }} onPress={() => router.navigate({ pathname: '/explore', params: { q: part } } as any)}>{part}</Text>
+        ) : part.startsWith('@') ? (
+          <Text key={idx} style={{ color: '#93C5FD', fontWeight: '700' }} onPress={() => router.navigate({ pathname: '/explore', params: { q: part.slice(1) } } as any)}>{part}</Text>
+        ) : (
+          <Text key={idx}>{part}</Text>
+        )
+      )}
+    </Text>
+  );
     return (
     <View style={s.reel}>
       <VideoView player={player} style={StyleSheet.absoluteFill} surfaceType="textureView" nativeControls={false} contentFit="cover" />
+      {!!filterPreset && filterPreset.opacity > 0 && (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: filterPreset.tint, opacity: filterPreset.opacity }]} />
+      )}
       <Pressable onPress={handleCenterPress} onLongPress={() => setOptOpen(true)} delayLongPress={400} style={[StyleSheet.absoluteFill, { zIndex: 1 }]} />
       <View onTouchStart={onEdgeStart} onTouchMove={onEdgeMove} onTouchEnd={onEdgeEnd} style={[s.edgeZone, { left: 0 }]} />
       <View onTouchStart={onEdgeStart} onTouchMove={onEdgeMove} onTouchEnd={onEdgeEnd} style={[s.edgeZone, { right: 0, bottom: 320 }]} />
 
-      {paused && <Ionicons name="play" size={56} color="rgba(255,255,255,0.85)" style={s.centerIcon} pointerEvents="none" />}
+      {buffering && !videoErr && <ActivityIndicator size="large" color={BRAND} style={s.centerIcon} />}
+      {videoErr && (
+        <View style={[s.centerIcon, { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.75)', padding: 16, borderRadius: 14 }]}>
+          <Ionicons name="alert-circle-outline" size={34} color="#EF4444" />
+          <Text style={{ color: '#fff', fontWeight: '700', marginTop: 6 }}>Video failed to load</Text>
+          <TouchableOpacity onPress={() => { setVideoErr(false); setBuffering(true); player.replace(item.mediaUrl); }} style={{ marginTop: 8, backgroundColor: BRAND, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8 }}>
+            <Text style={{ color: '#111', fontWeight: '800' }}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {paused && !videoErr && <Ionicons name="play" size={56} color="rgba(255,255,255,0.85)" style={s.centerIcon} pointerEvents="none" />}
       {heartPop && <Ionicons name="heart" size={86} color="#EF4444" style={s.centerIcon} pointerEvents="none" />}
       {!!holdHint && <View style={s.hintPill}><Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{holdHint}</Text></View>}
       {speedLocked && !holdHint && (
@@ -171,10 +237,16 @@ function ReelItem({
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>2x 🔒 Tap for 1x</Text>
         </TouchableOpacity>
       )}
-      {captions && !!item.caption && <View style={s.ccBox}><Text style={{ color: '#fff', fontSize: 13 }}>{item.caption}</Text></View>}
+      {captions && (!!item.captionsList?.[0]?.text || !!item.caption) && (
+        <View style={s.ccBox}><Text style={{ color: '#fff', fontSize: 13 }}>{item.captionsList?.[0]?.text || item.caption}</Text></View>
+      )}
 
       {!fullscreen && (
         <>
+          <TouchableOpacity onPress={() => setMuted((m) => !m)} style={s.muteBtn}>
+            <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={18} color="#fff" />
+          </TouchableOpacity>
+
           <View style={s.bottomInfo} pointerEvents="box-none">
             {reposted && (
               <TouchableOpacity onPress={() => setThoughtOpen(true)} style={s.thoughtTrigger}>
@@ -182,27 +254,38 @@ function ReelItem({
                 {myAv ? <Image source={{ uri: myAv }} style={s.thoughtMiniAv} /> : <View style={[s.thoughtMiniAv, { backgroundColor: BRAND }]} />}
               </TouchableOpacity>
             )}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <TouchableOpacity onPress={() => router.push(`/user/${item.uid}` as any)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 {ownerAv ? <Image source={{ uri: ownerAv }} style={s.userAv} /> : <View style={[s.userAv, { backgroundColor: BRAND }]} />}
                 <Text style={s.userTxt}>@{owner?.username || item.username}</Text>
+                {(owner?.isVerified || owner?.verified) && <Ionicons name="checkmark-circle" size={14} color="#3B82F6" />}
               </TouchableOpacity>
               {item.uid !== uid && <TouchableOpacity onPress={toggleFollow} style={s.followPill}><Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{following ? 'Following' : 'Follow'}</Text></TouchableOpacity>}
             </View>
-            {!!item.caption && <Text style={s.capTxt} numberOfLines={2}>{item.caption}</Text>}
-            <TouchableOpacity onPress={onComment} style={s.addCommentBar}><Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13 }}>Add comment...</Text></TouchableOpacity>
+            {!!item.caption && renderCaption(item.caption)}
+            <TouchableOpacity onPress={() => onOpenMoreModal('audio', item)} style={s.audioPill}>
+              <Ionicons name="musical-notes" size={13} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }} numberOfLines={1}>{audioMeta.title} • {audioMeta.artist}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onComment} style={s.addCommentBar}><Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13 }}>{item.commentsDisabled ? 'Comments disabled' : 'Add comment...'}</Text></TouchableOpacity>
           </View>
 
           <View style={s.rightCol}>
             <View style={s.actBtn}>
               <AnimatedLikeButton liked={liked} onPress={() => triggerLike(false)} size={30} inactiveColor="#fff" />
-              <TouchableOpacity onPress={onLikes} hitSlop={8}><Text style={s.actTxt}>{formatLikeCount(likeCount)}</Text></TouchableOpacity>
+              <TouchableOpacity onPress={onLikes} hitSlop={8}>
+                <Text style={s.actTxt}>{item.hideLikeCount && !isOwner ? 'Likes' : formatLikeCount(likeCount)}</Text>
+              </TouchableOpacity>
             </View>
             <TouchableOpacity onPress={onComment} style={s.actBtn} hitSlop={8}><Ionicons name="chatbubble-outline" size={28} color="#fff" /><Text style={s.actTxt}>{item.commentsCount || 0}</Text></TouchableOpacity>
             <TouchableOpacity onPress={toggleRepost} style={s.actBtn} hitSlop={8}><Ionicons name="repeat" size={29} color={reposted ? BRAND : '#fff'} /><Text style={s.actTxt}>{repostCount}</Text></TouchableOpacity>
             <View style={s.actBtn}><SaveButton saved={saved} size={27} color="#fff" onPress={toggleSave} onLongPress={onSaveSheet} /></View>
             <TouchableOpacity onPress={onShare} style={s.actBtn} hitSlop={8}><Ionicons name="paper-plane-outline" size={26} color="#fff" /></TouchableOpacity>
             <TouchableOpacity onPress={() => setOptOpen(true)} style={s.actBtn} hitSlop={10}><Ionicons name="ellipsis-vertical" size={23} color="#fff" /></TouchableOpacity>
+          </View>
+
+          <View style={s.progTrack}>
+            <View style={[s.progFill, { width: `${Math.round(progressRatio * 100)}%` }]} />
           </View>
         </>
       )}
@@ -211,6 +294,8 @@ function ReelItem({
       <ReelOptionsSheet
         visible={optOpen}
         onClose={() => setOptOpen(false)}
+        isOwner={isOwner}
+        isArchived={Boolean(item.isArchived)}
         fullscreen={fullscreen}
         onToggleFullscreen={() => setFullscreen((f) => !f)}
         paused={paused}
@@ -228,9 +313,15 @@ function ReelItem({
         onOpenAskAI={() => onOpenMoreModal('ai', item)}
         onOpenAudio={() => onOpenMoreModal('audio', item)}
         onOpenRemix={() => onOpenMoreModal('remix', item)}
+        onCopyLink={() => Share.share({ message: `flevora://reels?startId=${item.id}` })}
         onOpenWhy={() => onOpenMoreModal('why', item)}
         onInterested={() => onInterested(item)}
         onNotInterested={() => onOpenMoreModal('notInterested', item)}
+        onHideCreator={() => onHideCreator(item.uid)}
+        onEditReel={() => onOpenMoreModal('edit', item)}
+        onInsights={() => onOpenMoreModal('insights', item)}
+        onArchive={() => onArchiveReel(item)}
+        onDelete={() => onDeleteReel(item)}
         onReport={() => onOpenMoreModal('report', item)}
       />
     </View>
@@ -242,6 +333,7 @@ export default function ReelsScreen() {
   const uid = auth.currentUser?.uid || '';
   const listRef = useRef<FlatList>(null);
   const [focused, setFocused] = useState(true);
+  const [appActive, setAppActive] = useState(true);
   const [autoScroll, setAutoScroll] = useState(false);
   const [feedTab, setFeedTab] = useState<'forYou' | 'following'>('forYou');
   const [reels, setReels] = useState<any[]>([]);
@@ -259,6 +351,11 @@ export default function ReelsScreen() {
   useFocusEffect(useCallback(() => { setFocused(true); return () => setFocused(false); }, []));
 
   useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => setAppActive(st === 'active'));
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
     const q = query(collection(db, 'posts'), where('mediaType', '==', 'video'), orderBy('createdAt', 'desc'));
     const u1 = onSnapshot(q, (snap) => {
       let list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -274,12 +371,16 @@ export default function ReelsScreen() {
   }, [uid, startId]);
 
   const hiddenIds = new Set(Array.isArray(me?.notInterestedPosts) ? me.notInterestedPosts : []);
-  const shownReels = reels.filter((r) => {
-    if (hiddenIds.has(r.id)) return false;
-    if (!canViewReel(r, usersMap[r.uid], me, uid)) return false;
-    if (feedTab === 'following') return Array.isArray(me?.following) && me.following.includes(r.uid);
-    return true;
-  });
+  const shownReels = useMemo(() => {
+    const filtered = reels.filter((r) => {
+      if (hiddenIds.has(r.id)) return false;
+      if (!canViewReelExtended(r, usersMap[r.uid], me, uid)) return false;
+      if (feedTab === 'following') return Array.isArray(me?.following) && me.following.includes(r.uid);
+      return true;
+    });
+    if (feedTab === 'forYou' && !startId) return rankReelsForYou(filtered, me);
+    return filtered;
+  }, [reels, usersMap, me, uid, feedTab, startId]);
 
   const goNext = (curId: string) => {
     const idx = shownReels.findIndex((r) => r.id === curId);
@@ -292,10 +393,8 @@ export default function ReelsScreen() {
   const handleInterested = async (reel: any) => {
     try {
       const res = await saveReelInterest({ reel, myUid: uid, me, interested: true });
-      Alert.alert('Preference Saved', res.alreadyMarked ? 'You already marked this Reel as Interested.' : 'We will show more Reels like this.');
-    } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not save preference.');
-    }
+      Alert.alert('Preference Saved', res.alreadyMarked ? 'Already marked as Interested.' : 'We will show more Reels like this.');
+    } catch (e: any) { Alert.alert('Error', e?.message || 'Could not save preference.'); }
   };
 
   const handleNotInterested = async (reason: string) => {
@@ -304,9 +403,25 @@ export default function ReelsScreen() {
       await saveReelInterest({ reel: moreModal.reel, myUid: uid, me, interested: false, reason });
       goNext(moreModal.reel.id);
       Alert.alert('Feedback Recorded', 'We will show fewer Reels like this.');
-    } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not record feedback.');
-    }
+    } catch (e: any) { Alert.alert('Error', e?.message || 'Could not record feedback.'); }
+  };
+
+  const handleHideCreator = async (targetUid: string) => {
+    if (!uid || !targetUid || targetUid === uid) return;
+    await updateDoc(doc(db, 'users', uid), { hiddenCreators: arrayUnion(targetUid) }).catch(() => {});
+    Alert.alert('Creator Hidden', 'Reels from this creator are hidden.');
+  };
+
+  const handleArchiveReel = async (reel: any) => {
+    await updateDoc(doc(db, 'posts', reel.id), { isArchived: !reel.isArchived, updatedAt: serverTimestamp() }).catch(() => {});
+    Alert.alert(reel.isArchived ? 'Restored' : 'Archived', reel.isArchived ? 'Reel restored to feed.' : 'Reel moved to your private Archive.');
+  };
+
+  const handleDeleteReel = (reel: any) => {
+    Alert.alert('Delete Reel?', 'This permanently removes the Reel from Flevora.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteDoc(doc(db, 'posts', reel.id)).catch(() => Alert.alert('Error', 'Could not delete Reel.')) },
+    ]);
   };
 
   return (
@@ -320,7 +435,18 @@ export default function ReelsScreen() {
         ))}
       </View>
       <FlatList ref={listRef} data={shownReels} pagingEnabled windowSize={3} maxToRenderPerBatch={2} showsVerticalScrollIndicator={false} keyExtractor={(i) => i.id} onViewableItemsChanged={onView} viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
-        renderItem={({ item }) => <ReelItem item={item} active={item.id === activeId} focused={focused} me={me} owner={usersMap[item.uid]} autoScroll={autoScroll} onToggleAutoScroll={() => setAutoScroll((v) => !v)} onNextReel={() => goNext(item.id)} onComment={() => setCommentPost(item)} onShare={() => setShareReel(item)} onLikes={() => setLikesPost(item)} onRepostToast={showRepostToast} onSaveSheet={() => setSaveTarget(item)} onOpenMoreModal={(type: string, reel: any) => setMoreModal({ type, reel })} onInterested={handleInterested} />}
+        renderItem={({ item }) => (
+          <ReelItem
+            item={item} active={item.id === activeId} focused={focused} appActive={appActive}
+            me={me} owner={usersMap[item.uid]} autoScroll={autoScroll}
+            onToggleAutoScroll={() => setAutoScroll((v) => !v)} onNextReel={() => goNext(item.id)}
+            onComment={() => setCommentPost(item)} onShare={() => setShareReel(item)} onLikes={() => setLikesPost(item)}
+            onRepostToast={showRepostToast} onSaveSheet={() => setSaveTarget(item)}
+            onOpenMoreModal={(type: string, reel: any) => setMoreModal({ type, reel })}
+            onInterested={handleInterested} onHideCreator={handleHideCreator}
+            onArchiveReel={handleArchiveReel} onDeleteReel={handleDeleteReel}
+          />
+        )}
         ListEmptyComponent={<View style={s.empty}><Ionicons name="videocam-outline" size={48} color="#666" /><Text style={{ color: '#888', marginTop: 10 }}>No reels yet</Text></View>}
       />
       {!!toastReelId && (
@@ -340,6 +466,8 @@ export default function ReelsScreen() {
       <WhySeeingModal visible={moreModal?.type === 'why'} reel={moreModal?.reel} owner={usersMap[moreModal?.reel?.uid]} me={me} feedTab={feedTab} onClose={() => setMoreModal(null)} />
       <NotInterestedModal visible={moreModal?.type === 'notInterested'} onSubmit={handleNotInterested} onClose={() => setMoreModal(null)} />
       <ReportReelModal visible={moreModal?.type === 'report'} reel={moreModal?.reel} myUid={uid} onClose={() => setMoreModal(null)} />
+      <ReelOwnerEditModal visible={moreModal?.type === 'edit'} reel={moreModal?.reel} onClose={() => setMoreModal(null)} />
+      <ReelInsightsModal visible={moreModal?.type === 'insights'} reel={moreModal?.reel} onClose={() => setMoreModal(null)} />
     </View>
   );
 }
@@ -349,6 +477,7 @@ const s = StyleSheet.create({
   reel: { height: H, backgroundColor: '#000', justifyContent: 'flex-end' },
   edgeZone: { position: 'absolute', top: 90, bottom: 160, width: 52, zIndex: 10 },
   centerIcon: { position: 'absolute', alignSelf: 'center', top: '44%', zIndex: 15 },
+  muteBtn: { position: 'absolute', top: 48, right: 14, backgroundColor: 'rgba(0,0,0,0.45)', padding: 8, borderRadius: 18, zIndex: 40 },
   hintPill: { position: 'absolute', bottom: 150, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.72)', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, zIndex: 45 },
   ccBox: { position: 'absolute', bottom: 180, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.75)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, maxWidth: '80%', zIndex: 25 },
   rightCol: { position: 'absolute', right: 12, bottom: 26, alignItems: 'center', gap: 16, zIndex: 40, elevation: 40 },
@@ -362,8 +491,10 @@ const s = StyleSheet.create({
   userTxt: { color: '#fff', fontWeight: '800', fontSize: 15 },
   followPill: { borderWidth: 1, borderColor: '#fff', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 3 },
   capTxt: { color: '#fff', fontSize: 14, marginTop: 6 },
+  audioPill: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6, backgroundColor: 'rgba(0,0,0,0.45)', alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, maxWidth: '85%' },
   addCommentBar: { marginTop: 10, backgroundColor: 'rgba(255,255,255,0.14)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9 },
+  progTrack: { height: 2.5, backgroundColor: 'rgba(255,255,255,0.25)', width: '100%', zIndex: 35 },
+  progFill: { height: 2.5, backgroundColor: BRAND },
   toast: { position: 'absolute', left: 12, right: 12, bottom: 12, backgroundColor: '#262626', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 50, elevation: 50 },
   empty: { height: H, justifyContent: 'center', alignItems: 'center' },
 });
-              
