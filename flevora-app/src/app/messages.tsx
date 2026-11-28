@@ -13,6 +13,7 @@ import { AccountSwitcherModal, SelectMoreModal, NewChatModal } from '../constant
 import { NoteModal, NoteDetailModal, canSeeNote } from '../constants/NoteModal';
 import { DmChatRoom } from '../constants/DmChatRoom';
 import { DmRequestsView } from '../constants/DmRequestsView';
+import { BroadcastChannelsHub } from '../constants/BroadcastChannelsHub';
 
 export default function MessagesScreen() {
   const params = useLocalSearchParams<{ uid?: string; name?: string }>();
@@ -39,7 +40,7 @@ export default function MessagesScreen() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [detailNote, setDetailNote] = useState<{ note: any; owner: any } | null>(null);
-  const [modals, setModals] = useState({ acc: false, more: false, newChat: false, note: false });
+  const [modals, setModals] = useState({ acc: false, more: false, newChat: false, note: false, channels: false });
 
   useEffect(() => {
     setMe(null); setConvos([]); setMsgs([]);
@@ -177,7 +178,7 @@ export default function MessagesScreen() {
         {selectMode ? (
           <><TouchableOpacity onPress={() => { setSelectMode(false); setSelected([]); }}><Text style={{ color: c.text, fontWeight: '700' }}>Cancel</Text></TouchableOpacity><Text style={{ color: c.text, fontWeight: '800' }}>{selected.length} selected</Text><TouchableOpacity onPress={() => setModals((m) => ({ ...m, more: true }))}><Text style={{ color: BRAND, fontWeight: '800' }}>More</Text></TouchableOpacity></>
         ) : (
-          <><View style={{ width: 52 }} /><TouchableOpacity onPress={() => setModals((m) => ({ ...m, acc: true }))} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Text style={{ color: c.text, fontSize: 18, fontWeight: '800' }}>{me?.username || L.messages}</Text><Ionicons name="chevron-down" size={16} color={c.text} /></TouchableOpacity><View style={{ flexDirection: 'row', gap: 14 }}><TouchableOpacity onPress={() => setSelectMode(true)}><Ionicons name="ellipsis-horizontal" size={22} color={c.text} /></TouchableOpacity><TouchableOpacity onPress={() => setModals((m) => ({ ...m, newChat: true }))}><Ionicons name="create-outline" size={22} color={c.text} /></TouchableOpacity></View></>
+          <><TouchableOpacity onPress={() => setModals((m) => ({ ...m, channels: true }))} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Ionicons name="megaphone-outline" size={21} color={BRAND} /><Text style={{ color: c.text, fontWeight: '700', fontSize: 12 }}>Channels</Text></TouchableOpacity><TouchableOpacity onPress={() => setModals((m) => ({ ...m, acc: true }))} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Text style={{ color: c.text, fontSize: 18, fontWeight: '800' }}>{me?.username || L.messages}</Text><Ionicons name="chevron-down" size={16} color={c.text} /></TouchableOpacity><View style={{ flexDirection: 'row', gap: 14 }}><TouchableOpacity onPress={() => setSelectMode(true)}><Ionicons name="ellipsis-horizontal" size={22} color={c.text} /></TouchableOpacity><TouchableOpacity onPress={() => setModals((m) => ({ ...m, newChat: true }))}><Ionicons name="create-outline" size={22} color={c.text} /></TouchableOpacity></View></>
         )}
       </View>
 
@@ -261,6 +262,7 @@ export default function MessagesScreen() {
       <NewChatModal visible={modals.newChat} users={users} c={c} onClose={() => setModals((m) => ({ ...m, newChat: false }))} onPick={(u: any) => { setActiveChat({ chatId: [myUid, u.id].sort().join('_'), targetUid: u.id, targetName: u.username }); setModals((m) => ({ ...m, newChat: false })); }} onCreateGroup={createGroup} />
       <NoteModal visible={modals.note} me={me} users={users} activeNote={myNoteActive ? myNote : null} onClose={() => setModals((m) => ({ ...m, note: false }))} />
       <NoteDetailModal visible={!!detailNote} note={detailNote?.note} owner={detailNote?.owner} me={me} myUid={myUid} allUsers={users} onReplyDm={replyToNoteInDm} onEditOwn={() => setModals((m) => ({ ...m, note: true }))} onClose={() => setDetailNote(null)} />
+      <BroadcastChannelsHub visible={modals.channels} myUid={myUid} me={me} allUsers={users} onClose={() => setModals((m) => ({ ...m, channels: false }))} />
     </View>
   );
 }
@@ -278,3 +280,4 @@ const s = StyleSheet.create({
   chatRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10 },
   chatAv: { width: 48, height: 48, borderRadius: 24 },
 });
+                                     
