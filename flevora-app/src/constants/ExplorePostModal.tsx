@@ -13,6 +13,8 @@ import { ShareModal } from './ShareModal';
 import { canViewPost, toggleFollowUser } from './searchHelpers';
 import { AnimatedLikeButton, DoubleTapHeartOverlay } from './LikeComponents';
 import { formatLikesLabel, togglePostLike } from './likeSystem';
+import { RepostButton, RepostSheetModal, RepostersModal } from './RepostModals';
+import { saveRepostThought, toggleRepost } from './repostSystem';
 
 const W = Dimensions.get('window').width;
 
@@ -55,6 +57,8 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
   const [blockedMsg, setBlockedMsg] = useState<string | null>(null);
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
   const [sharePost, setSharePost] = useState<any | null>(null);
+  const [repostOpen, setRepostOpen] = useState(false);
+  const [repostersOpen, setRepostersOpen] = useState(false);
 
   useEffect(() => {
     if (!post) { setLivePost(null); setBlockedMsg(null); return; }
@@ -86,6 +90,7 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
 
   const p = livePost || post;
   const liked = Array.isArray(p.likes) && p.likes.includes(myUid);
+  const reposted = Array.isArray(p.reposts) && p.reposts.includes(myUid);
   const saved = Array.isArray(me?.savedPosts) && me.savedPosts.includes(p.id);
   const isFollowing = Array.isArray(me?.following) && me.following.includes(p.uid);
   const mediaList: string[] = Array.isArray(p.media) && p.media.length > 0 ? p.media : (p.mediaUrl ? [p.mediaUrl] : []);
@@ -203,6 +208,12 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
                 <TouchableOpacity onPress={() => setCommentPostId(p.id)}>
                   <Ionicons name="chatbubble-outline" size={24} color={c.text} />
                 </TouchableOpacity>
+                <RepostButton
+                  reposted={reposted}
+                  count={p.reposts?.length || 0}
+                  onPress={() => setRepostOpen(true)}
+                  onLongPressCount={() => setRepostersOpen(true)}
+                />
                 <TouchableOpacity onPress={() => setSharePost(p)}>
                   <Ionicons name="paper-plane-outline" size={24} color={c.text} />
                 </TouchableOpacity>
@@ -227,13 +238,27 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
               <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>
                 {formatLikesLabel(Array.isArray(p.likes) ? p.likes.length : 0)}
               </Text>
+              {!!p.repostThoughts?.[myUid] && (
+                <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '600' }}>Your thought: "{p.repostThoughts[myUid]}"</Text>
+              )}
               {!!p.caption && renderCaptionWithTags(p.caption)}
             </View>
           </ScrollView>
         )}
 
-      <CommentModal postId={commentPostId} post={p} onClose={() => setCommentPostId(null)} />
+        <CommentModal postId={commentPostId} post={p} onClose={() => setCommentPostId(null)} />
         <ShareModal post={sharePost} onClose={() => setSharePost(null)} />
+        <RepostSheetModal
+          visible={repostOpen}
+          post={p}
+          myUid={myUid}
+          onClose={() => setRepostOpen(false)}
+          onRepost={(th) => toggleRepost({ post: p, myUid, me, owner: liveAuthor, thought: th, onOptimistic: (rep, t) => setLivePost({ ...p, reposts: rep ? [...(p.reposts || []), myUid] : (p.reposts || []).filter((x: string) => x !== myUid), repostThoughts: { ...(p.repostThoughts || {}), [myUid]: t } }) })}
+          onSaveThought={(th) => saveRepostThought(p.id, myUid, th)}
+          onRemoveRepost={() => toggleRepost({ post: p, myUid, me, forceRemove: true, onOptimistic: () => setLivePost({ ...p, reposts: (p.reposts || []).filter((x: string) => x !== myUid) }) })}
+          onOpenReposters={() => setRepostersOpen(true)}
+        />
+        <RepostersModal visible={repostersOpen} uids={p.reposts || []} me={me} myUid={myUid} onClose={() => setRepostersOpen(false)} />
       </View>
     </Modal>
   );
