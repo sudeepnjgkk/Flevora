@@ -15,6 +15,7 @@ import { fetchUserRepostsPage } from '../constants/repostSystem';
 import { EditProfileModal, FollowListModal, HighlightModal, ProfessionalModal, shareProfileLink } from '../constants/ProfileSubModals';
 import { ProfileSettingsModal } from '../constants/ProfileSettingsModal';
 import { SavedLibraryView } from '../constants/SaveModals';
+import { NoteModal, NoteDetailModal, canSeeNote } from '../constants/NoteModal';
 import UploadScreen from './upload';
 
 const W = (Dimensions.get('window').width - 4) / 3;
@@ -25,6 +26,7 @@ export default function ProfileScreen() {
   const uid = auth.currentUser?.uid || '';
 
   const [user, setUser] = useState<any>(null);
+  const [myNote, setMyNote] = useState<any>(null);
   const [myPosts, setMyPosts] = useState<any[]>([]);
   const [postsCursor, setPostsCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [postsHasMore, setPostsHasMore] = useState(false);
@@ -41,15 +43,17 @@ export default function ProfileScreen() {
   const [createOpen, setCreateOpen] = useState(false);
   const [proOpen, setProOpen] = useState(false);
   const [colsOpen, setColsOpen] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteDetailOpen, setNoteDetailOpen] = useState(false);
   const [followMode, setFollowMode] = useState<'followers' | 'following' | 'requests' | null>(null);
   const [hlModal, setHlModal] = useState<{ open: boolean; item: any | null }>({ open: false, item: null });
   const [selectedPost, setSelectedPost] = useState<any | null>(null);
 
   useEffect(() => {
     if (!uid) return;
-    return onSnapshot(doc(db, 'users', uid), (s) => {
-      if (s.exists()) setUser({ id: s.id, ...s.data() });
-    });
+    const u1 = onSnapshot(doc(db, 'users', uid), (s) => { if (s.exists()) setUser({ id: s.id, ...s.data() }); });
+    const u2 = onSnapshot(doc(db, 'notes', uid), (s) => setMyNote(s.exists() ? { id: s.id, ...s.data() } : null), () => {});
+    return () => { u1(); u2(); };
   }, [uid]);
 
   const loadData = useCallback(async () => {
@@ -92,14 +96,7 @@ export default function ProfileScreen() {
   const deletePost = (postId: string) => {
     Alert.alert('Delete Post', 'Remove this post permanently?', [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteDoc(doc(db, 'posts', postId));
-          setMyPosts((p) => p.filter((x) => x.id !== postId));
-        },
-      },
+      { text: 'Delete', style: 'destructive', onPress: async () => { await deleteDoc(doc(db, 'posts', postId)); setMyPosts((p) => p.filter((x) => x.id !== postId)); } },
     ]);
   };
 
@@ -115,6 +112,7 @@ export default function ProfileScreen() {
     (user?.followRequests || []);
 
   const highlights: any[] = Array.isArray(user?.highlights) ? user.highlights : [];
+  const activeNote = canSeeNote(myNote, uid, uid, user, user) ? myNote : null;
     return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
       <View style={styles.topBar}>
@@ -139,13 +137,20 @@ export default function ProfileScreen() {
         ListHeaderComponent={
           <View style={{ paddingHorizontal: 14 }}>
             <View style={styles.infoRow}>
-              <TouchableOpacity onPress={() => setEditOpen(true)}>
-                {user?.avatar ? <Image source={{ uri: user.avatar }} style={styles.avatar} /> : (
-                  <View style={[styles.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
-                    <Text style={{ color: BRAND_TEXT, fontSize: 26, fontWeight: '700' }}>{(user?.username || 'U')[0].toUpperCase()}</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
+              <View style={{ alignItems: 'center' }}>
+                <TouchableOpacity onPress={() => (activeNote ? setNoteDetailOpen(true) : setNoteOpen(true))} style={[styles.noteChip, { backgroundColor: c.card, borderColor: c.border }]}>
+                  <Text style={{ color: activeNote ? c.text : c.muted, fontSize: 11, fontWeight: '700' }} numberOfLines={1}>
+                    {activeNote ? (activeNote.promptQuestion || activeNote.text || 'Note') : '+ Note...'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setEditOpen(true)}>
+                  {user?.avatar ? <Image source={{ uri: user.avatar }} style={styles.avatar} /> : (
+                    <View style={[styles.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
+                      <Text style={{ color: BRAND_TEXT, fontSize: 26, fontWeight: '700' }}>{(user?.username || 'U')[0].toUpperCase()}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
               <View style={styles.statsRow}>
                 <View style={styles.stat}><Text style={[styles.statNum, { color: c.text }]}>{myPosts.length}</Text><Text style={{ color: c.muted, fontSize: 12 }}>Posts</Text></View>
                 <TouchableOpacity style={styles.stat} onPress={() => setFollowMode('followers')}><Text style={[styles.statNum, { color: c.text }]}>{user?.followers?.length || 0}</Text><Text style={{ color: c.muted, fontSize: 12 }}>Followers</Text></TouchableOpacity>
@@ -228,6 +233,8 @@ export default function ProfileScreen() {
       <ProfessionalModal visible={proOpen} uid={uid} user={user} posts={myPosts} onClose={() => setProOpen(false)} />
       <ProfileSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} onOpenEdit={() => setEditOpen(true)} onOpenRequests={() => setFollowMode('requests')} />
       <ExplorePostModal post={selectedPost} author={user} me={user} onClose={() => setSelectedPost(null)} onPressTag={(t) => router.navigate({ pathname: '/explore', params: { q: t } } as any)} onPressPlace={(p) => router.navigate({ pathname: '/explore', params: { q: p } } as any)} />
+      <NoteModal visible={noteOpen} me={user} users={[]} activeNote={activeNote} onClose={() => setNoteOpen(false)} />
+      <NoteDetailModal visible={noteDetailOpen} note={activeNote} owner={user} me={user} myUid={uid} onEditOwn={() => setNoteOpen(true)} onClose={() => setNoteDetailOpen(false)} />
       <Modal visible={colsOpen} animationType="slide" onRequestClose={() => setColsOpen(false)}>
         <View style={[styles.container, { backgroundColor: c.background }]}>
           <View style={[styles.topBar, { borderBottomWidth: 0.5, borderBottomColor: c.border }]}>
@@ -255,6 +262,7 @@ const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 10 },
   username: { fontSize: 19, fontWeight: '800' },
   infoRow: { flexDirection: 'row', alignItems: 'center', gap: 18, marginBottom: 10 },
+  noteChip: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, marginBottom: -8, zIndex: 5, maxWidth: 92 },
   avatar: { width: 82, height: 82, borderRadius: 41 },
   statsRow: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
   stat: { alignItems: 'center' },
@@ -269,3 +277,4 @@ const styles = StyleSheet.create({
   gridImg: { width: W, height: W },
   badge: { position: 'absolute', top: 6, right: 6 },
 });
+            
