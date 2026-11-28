@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Image, Modal, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, Modal, StyleSheet, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { collection, query, where, orderBy, onSnapshot, doc } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND, NEON } from './theme';
+import { useLang } from './i18n';
+import { canViewStory, storyT } from './storiesCapabilities';
 import { FlevoraLogo } from './FlevoraLogo';
 import { StoryCreatorModal } from './StoryCreatorModal';
 import { StoryViewerModal } from './StoryViewerModal';
+import { StoryArchiveModal } from './MyStoryModals';
 import { NotificationModal } from './NotificationModal';
 import { CreateMenuModal } from './ProfileModals';
 import UploadScreen from '../app/upload';
@@ -15,12 +18,17 @@ export { CommentModal } from './CommentModal';
 
 export function FeedHeader() {
   const { c } = useTheme();
+  const { lang } = useLang();
+  const L = storyT(lang);
   const uid = auth.currentUser?.uid || '';
+
   const [me, setMe] = useState<any>(null);
   const [usersMap, setUsersMap] = useState<Record<string, any>>({});
   const [stories, setStories] = useState<any[]>([]);
+  const [seenIds, setSeenIds] = useState<Record<string, boolean>>({});
   const [viewStories, setViewStories] = useState<any[] | null>(null);
   const [creatorOpen, setCreatorOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [uploadMode, setUploadMode] = useState<'POST' | 'REEL' | 'STORY' | 'LIVE' | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -28,13 +36,7 @@ export function FeedHeader() {
 
   useEffect(() => {
     const u1 = onSnapshot(query(collection(db, 'stories'), orderBy('createdAt', 'desc')), (snap) => {
-      const now = Date.now();
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((st: any) => {
-        if (st.expiresAt && st.expiresAt <= now) return false;
-        if (st.closeFriendsOnly) return st.uid === uid || (Array.isArray(st.allowedUids) && st.allowedUids.includes(uid));
-        return true;
-      });
-      setStories(list);
+      setStories(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     }, () => {});
     const u2 = onSnapshot(collection(db, 'users'), (snap) => {
       const m: Record<string, any> = {};
@@ -49,61 +51,72 @@ export function FeedHeader() {
   }, [uid]);
 
   const { myStories, otherGroups } = useMemo(() => {
-    const mine = stories.filter((st) => st.uid === uid);
+    const mutedSet = new Set(Array.isArray(me?.mutedStories) ? me.mutedStories : []);
+    const visible = stories.filter((st) => canViewStory(st, usersMap[st.uid], me, uid));
+    const mine = visible.filter((st) => st.uid === uid);
     const map: Record<string, any[]> = {};
-    stories.filter((st) => st.uid !== uid).forEach((st) => {
+    visible.filter((st) => st.uid !== uid && !mutedSet.has(st.uid)).forEach((st) => {
       if (!map[st.uid]) map[st.uid] = [];
       map[st.uid].push(st);
     });
-    return { myStories: mine, otherGroups: Object.values(map) };
-  }, [stories, uid]);
+    const groups = Object.values(map).sort((a, b) => {
+      const aUnseen = a.some((st) => !seenIds[st.id] && !(st.viewers || []).includes(uid));
+      const bUnseen = b.some((st) => !seenIds[st.id] && !(st.viewers || []).includes(uid));
+      return Number(bUnseen) - Number(aUnseen);
+    });
+    return { myStories: mine, otherGroups: groups };
+  }, [stories, usersMap, me, uid, seenIds]);
 
   const myDp = me?.photoUrl || me?.avatar || '';
   const hasMyStory = myStories.length > 0;
-  const myRingColor = hasMyStory ? (myStories[0]?.closeFriendsOnly ? '#10B981' : NEON.magenta) : c.border;
+  const myRingColor = hasMyStory ? (myStories[0]?.closeFriendsOnly ? '#10B981' : BRAND) : c.border;
+
+  const openYourStoryMenu = () => {
+    const btns: any[] = [{ text: L.addStory, onPress: () => setCreatorOpen(true) }];
+    if (hasMyStory) btns.push({ text: 'View Your Story', onPress: () => setViewStories(myStories) });
+    btns.push({ text: L.archive, onPress: () => setArchiveOpen(true) });
+    btns.push({ text: L.cancel, style: 'cancel' });
+    Alert.alert(L.yourStory, undefined, btns);
+  };
 
   return (
     <View style={{ backgroundColor: c.background }}>
       <View style={[s.topBar, { borderBottomColor: c.border }]}>
         <FlevoraLogo size={34} showText />
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-          <TouchableOpacity onPress={() => setMenuOpen(true)} hitSlop={8}>
-            <Ionicons name="add-circle-outline" size={28} color={c.text} />
-          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setMenuOpen(true)} hitSlop={8}><Ionicons name="add-circle-outline" size={28} color={c.text} /></TouchableOpacity>
           <TouchableOpacity onPress={() => setNotifOpen(true)} hitSlop={8}>
             <Ionicons name={unreadCount > 0 ? 'heart' : 'heart-outline'} size={26} color={unreadCount > 0 ? NEON.pink : c.text} />
-            {unreadCount > 0 && (
-              <View style={[s.badge, { borderColor: c.background }]}>
-                <Text style={s.badgeTxt}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-              </View>
-            )}
+            {unreadCount > 0 && <View style={[s.badge, { borderColor: c.background }]}><Text style={s.badgeTxt}>{unreadCount > 99 ? '99+' : unreadCount}</Text></View>}
           </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[s.storyBar, { borderBottomColor: c.border }]}>
         <View style={s.storyItem}>
-          <TouchableOpacity activeOpacity={0.85} onPress={() => (hasMyStory ? setViewStories(myStories) : setCreatorOpen(true))}>
+          <TouchableOpacity activeOpacity={0.85} onPress={() => (hasMyStory ? setViewStories(myStories) : setCreatorOpen(true))} onLongPress={openYourStoryMenu}>
             <View style={[s.ring, { borderColor: myRingColor }]}>
-              {myDp ? <Image source={{ uri: myDp }} style={s.avatar} /> : <View style={[s.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={26} color="#fff" /></View>}
+              {myDp ? <Image source={{ uri: myDp }} style={s.avatar} /> : <View style={[s.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={26} color="#111827" /></View>}
             </View>
           </TouchableOpacity>
-          <TouchableOpacity style={[s.plusBadge, { borderColor: c.background }]} onPress={() => setCreatorOpen(true)} hitSlop={6}>
+          <TouchableOpacity style={[s.plusBadge, { borderColor: c.background }]} onPress={openYourStoryMenu} hitSlop={6}>
             <Ionicons name="add" size={14} color="#fff" />
           </TouchableOpacity>
-          <Text style={[s.storyName, { color: c.text }]} numberOfLines={1}>Your story</Text>
+          <Text style={[s.storyName, { color: c.text }]} numberOfLines={1}>{L.yourStory}</Text>
         </View>
 
         {otherGroups.map((grp) => {
           const first = grp[0];
           const u = usersMap[first.uid];
           const dp = u?.photoUrl || u?.avatar || first.mediaUrl;
+          const unseen = grp.some((st) => !seenIds[st.id] && !(st.viewers || []).includes(uid));
+          const ringColor = first.closeFriendsOnly ? '#10B981' : unseen ? BRAND : c.border;
           return (
             <TouchableOpacity key={first.uid} style={s.storyItem} onPress={() => setViewStories(grp)}>
-              <View style={[s.ring, { borderColor: first.closeFriendsOnly ? '#10B981' : NEON.pink }]}>
-                <Image source={{ uri: dp }} style={s.avatar} />
+              <View style={[s.ring, { borderColor: ringColor }]}>
+                {dp ? <Image source={{ uri: dp }} style={s.avatar} /> : <View style={[s.avatar, { backgroundColor: c.input }]} />}
               </View>
-              <Text style={[s.storyName, { color: c.text }]} numberOfLines={1}>{u?.username || first.username}</Text>
+              <Text style={[s.storyName, { color: unseen ? c.text : c.muted }]} numberOfLines={1}>{u?.username || first.username}</Text>
             </TouchableOpacity>
           );
         })}
@@ -113,8 +126,17 @@ export function FeedHeader() {
       <Modal visible={!!uploadMode} animationType="slide" onRequestClose={() => setUploadMode(null)}>
         <UploadScreen initialMode={uploadMode || 'POST'} onClose={() => setUploadMode(null)} />
       </Modal>
-      <StoryCreatorModal visible={creatorOpen} onClose={() => setCreatorOpen(false)} />
-      <StoryViewerModal visible={!!viewStories} stories={viewStories || []} onClose={() => setViewStories(null)} onAddStory={() => { setViewStories(null); setCreatorOpen(true); }} />
+      <StoryCreatorModal visible={creatorOpen} onClose={() => setCreatorOpen(false)} uid={uid} me={me} />
+      <StoryViewerModal
+        visible={!!viewStories}
+        stories={viewStories || []}
+        myUid={uid}
+        me={me}
+        onMarkSeen={(sid: string) => setSeenIds((p) => ({ ...p, [sid]: true }))}
+        onClose={() => setViewStories(null)}
+        onAddStory={() => { setViewStories(null); setCreatorOpen(true); }}
+      />
+      <StoryArchiveModal visible={archiveOpen} uid={uid} me={me} onClose={() => setArchiveOpen(false)} />
       <NotificationModal visible={notifOpen} onClose={() => setNotifOpen(false)} />
     </View>
   );
