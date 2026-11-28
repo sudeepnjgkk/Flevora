@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { doc, onSnapshot, deleteDoc, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
+import { collection, doc, onSnapshot, deleteDoc, query, where, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND, BRAND_TEXT } from '../constants/theme';
 import { ExplorePostModal } from '../constants/ExplorePostModal';
@@ -16,6 +16,8 @@ import { EditProfileModal, FollowListModal, HighlightModal, ProfessionalModal, s
 import { ProfileSettingsModal } from '../constants/ProfileSettingsModal';
 import { SavedLibraryView } from '../constants/SaveModals';
 import { NoteModal, NoteDetailModal, canSeeNote } from '../constants/NoteModal';
+import { BroadcastRoomModal } from '../constants/BroadcastRoomModal';
+import { BroadcastChannelsHub } from '../constants/BroadcastChannelsHub';
 import UploadScreen from './upload';
 
 const W = (Dimensions.get('window').width - 4) / 3;
@@ -27,6 +29,9 @@ export default function ProfileScreen() {
 
   const [user, setUser] = useState<any>(null);
   const [myNote, setMyNote] = useState<any>(null);
+  const [myChannels, setMyChannels] = useState<any[]>([]);
+  const [activeCh, setActiveCh] = useState<any>(null);
+  const [hubOpen, setHubOpen] = useState(false);
   const [myPosts, setMyPosts] = useState<any[]>([]);
   const [postsCursor, setPostsCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [postsHasMore, setPostsHasMore] = useState(false);
@@ -53,7 +58,10 @@ export default function ProfileScreen() {
     if (!uid) return;
     const u1 = onSnapshot(doc(db, 'users', uid), (s) => { if (s.exists()) setUser({ id: s.id, ...s.data() }); });
     const u2 = onSnapshot(doc(db, 'notes', uid), (s) => setMyNote(s.exists() ? { id: s.id, ...s.data() } : null), () => {});
-    return () => { u1(); u2(); };
+    const u3 = onSnapshot(query(collection(db, 'channels'), where('ownerUid', '==', uid)), (s) => {
+      setMyChannels(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((ch: any) => ch.status !== 'deleted'));
+    }, () => {});
+    return () => { u1(); u2(); u3(); };
   }, [uid]);
 
   const loadData = useCallback(async () => {
@@ -182,6 +190,23 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
 
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
+              <TouchableOpacity onPress={() => (myChannels[0] ? setActiveCh(myChannels[0]) : setHubOpen(true))} style={[styles.colBar, { flex: 1, marginVertical: 0, backgroundColor: c.input }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="megaphone-outline" size={17} color={BRAND} />
+                  <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }} numberOfLines={1}>
+                    {myChannels[0] ? `${myChannels[0].name} (${myChannels.length})` : 'Broadcast Channels'}
+                  </Text>
+                </View>
+                <Text style={{ color: BRAND, fontWeight: '800', fontSize: 12 }}>{myChannels[0] ? 'Open' : 'Create'}</Text>
+              </TouchableOpacity>
+              {myChannels.length > 0 && (
+                <TouchableOpacity onPress={() => setHubOpen(true)} style={{ backgroundColor: c.input, padding: 10, borderRadius: 10 }}>
+                  <Ionicons name="list" size={18} color={c.text} />
+                </TouchableOpacity>
+              )}
+            </View>
+
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 10 }}>
               <TouchableOpacity onPress={() => setHlModal({ open: true, item: null })} style={{ alignItems: 'center', width: 62 }}>
                 <View style={[styles.hlCircle, { borderColor: c.border }]}><Ionicons name="add" size={24} color={c.text} /></View>
@@ -235,6 +260,8 @@ export default function ProfileScreen() {
       <ExplorePostModal post={selectedPost} author={user} me={user} onClose={() => setSelectedPost(null)} onPressTag={(t) => router.navigate({ pathname: '/explore', params: { q: t } } as any)} onPressPlace={(p) => router.navigate({ pathname: '/explore', params: { q: p } } as any)} />
       <NoteModal visible={noteOpen} me={user} users={[]} activeNote={activeNote} onClose={() => setNoteOpen(false)} />
       <NoteDetailModal visible={noteDetailOpen} note={activeNote} owner={user} me={user} myUid={uid} onEditOwn={() => setNoteOpen(true)} onClose={() => setNoteDetailOpen(false)} />
+      <BroadcastRoomModal visible={!!activeCh} channel={activeCh} myUid={uid} me={user} onClose={() => setActiveCh(null)} />
+      <BroadcastChannelsHub visible={hubOpen} myUid={uid} me={user} onClose={() => setHubOpen(false)} />
       <Modal visible={colsOpen} animationType="slide" onRequestClose={() => setColsOpen(false)}>
         <View style={[styles.container, { backgroundColor: c.background }]}>
           <View style={[styles.topBar, { borderBottomWidth: 0.5, borderBottomColor: c.border }]}>
@@ -277,4 +304,3 @@ const styles = StyleSheet.create({
   gridImg: { width: W, height: W },
   badge: { position: 'absolute', top: 6, right: 6 },
 });
-            
