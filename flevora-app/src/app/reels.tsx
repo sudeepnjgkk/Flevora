@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Pressable, Image, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Pressable, Image, Alert, StyleSheet, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -8,6 +8,11 @@ import { auth, db } from '../config';
 import { CommentModal } from '../constants/CommentModal';
 import { ShareModal } from '../constants/ShareModal';
 import { LikesPlaysModal, RepostThoughtModal, ReelOptionsSheet } from '../constants/ReelModals';
+import {
+  AboutReelModal, AskFlevoraAIModal, AudioDetailModal, RemixSequenceModal,
+  WhySeeingModal, NotInterestedModal, ReportReelModal,
+} from '../constants/ReelMoreModals';
+import { canViewReel, saveReelInterest } from '../constants/reelOptionsSystem';
 import { BRAND, NEON } from '../constants/theme';
 import { AnimatedLikeButton } from '../constants/LikeComponents';
 import { formatLikeCount, togglePostLike } from '../constants/likeSystem';
@@ -16,10 +21,14 @@ import { toggleSavePost } from '../constants/saveSystem';
 
 const H = Dimensions.get('window').height - 56;
 
-function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoScroll, onNextReel, onComment, onShare, onLikes, onRepostToast, onSaveSheet }: any) {
+function ReelItem({
+  item, active, focused, me, owner, autoScroll, onToggleAutoScroll, onNextReel,
+  onComment, onShare, onLikes, onRepostToast, onSaveSheet, onOpenMoreModal, onInterested,
+}: any) {
   const router = useRouter();
   const uid = auth.currentUser?.uid || '';
   const [paused, setPaused] = useState(false);
+  const [muted, setMuted] = useState(false);
   const [liked, setLiked] = useState(Array.isArray(item.likes) && item.likes.includes(uid));
   const [likeCount, setLikeCount] = useState(Array.isArray(item.likes) ? item.likes.length : 0);
   const [reposted, setReposted] = useState(Array.isArray(item.reposts) && item.reposts.includes(uid));
@@ -54,8 +63,10 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
     setSaved(Array.isArray(me?.savedPosts) && me.savedPosts.includes(item.id));
   }, [me?.savedPosts, item.id]);
 
+  useEffect(() => { if (!active) { setSpeed(1); setSpeedLocked(false); } }, [active]);
   useEffect(() => { player.loop = !autoScroll; }, [autoScroll]);
   useEffect(() => { player.playbackRate = speed; }, [speed]);
+  useEffect(() => { player.muted = muted; }, [muted]);
   useEffect(() => {
     if (!autoScroll || !active || !focused) return;
     const sub = player.addListener('playToEnd', () => onNextReel?.());
@@ -68,15 +79,13 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
   }, [focused, active, paused]);
 
   const following = Array.isArray(me?.following) && me.following.includes(item.uid);
+  const isInterested = Array.isArray(me?.interestedPosts) && me.interestedPosts.includes(item.id);
   const myThought = item.repostThoughts?.[uid] || '';
   const myAv = me?.photoUrl || me?.avatar || '';
   const ownerAv = owner?.photoUrl || owner?.avatar || item.avatar || '';
 
   const triggerLike = (forceLike = false) => {
-    if (forceLike) {
-      setHeartPop(true);
-      setTimeout(() => setHeartPop(false), 650);
-    }
+    if (forceLike) { setHeartPop(true); setTimeout(() => setHeartPop(false), 650); }
     const prevCount = likeCount;
     togglePostLike({
       post: { ...item, likes: liked ? [uid] : [] },
@@ -84,14 +93,8 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
       me,
       targetUser: owner,
       forceLike,
-      onOptimistic: (nextLiked) => {
-        setLiked(nextLiked);
-        setLikeCount(Math.max(0, prevCount + (nextLiked ? 1 : -1)));
-      },
-      onRollback: (wasLiked) => {
-        setLiked(wasLiked);
-        setLikeCount(prevCount);
-      },
+      onOptimistic: (nextLiked) => { setLiked(nextLiked); setLikeCount(Math.max(0, prevCount + (nextLiked ? 1 : -1))); },
+      onRollback: (wasLiked) => { setLiked(wasLiked); setLikeCount(prevCount); },
     });
   };
 
@@ -147,15 +150,7 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
 
   const saveThought = async (txt: string) => { setThoughtOpen(false); if (uid) await updateDoc(doc(db, 'posts', item.id), { [`repostThoughts.${uid}`]: txt || deleteField() }).catch(() => {}); };
   const deleteRepost = async () => { setThoughtOpen(false); if (!uid) return; setReposted(false); setRepostCount((c) => Math.max(0, c - 1)); await updateDoc(doc(db, 'posts', item.id), { reposts: arrayRemove(uid), [`repostThoughts.${uid}`]: deleteField() }).catch(() => {}); };
-  const toggleSave = () => {
-    toggleSavePost({
-      postId: item.id,
-      myUid: uid,
-      me,
-      onOptimistic: (nextSaved) => setSaved(nextSaved),
-      onRollback: (wasSaved) => setSaved(wasSaved),
-    });
-  };
+  const toggleSave = () => toggleSavePost({ postId: item.id, myUid: uid, me, onOptimistic: setSaved, onRollback: setSaved });
   const toggleFollow = async () => {
     if (!uid || uid === item.uid) return;
     await updateDoc(doc(db, 'users', uid), { following: following ? arrayRemove(item.uid) : arrayUnion(item.uid) }).catch(() => {});
@@ -213,7 +208,31 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
       )}
 
       <RepostThoughtModal visible={thoughtOpen} avatar={myAv} initialText={myThought} onSave={saveThought} onDelete={deleteRepost} onClose={() => setThoughtOpen(false)} />
-      <ReelOptionsSheet visible={optOpen} onClose={() => setOptOpen(false)} fullscreen={fullscreen} onToggleFullscreen={() => setFullscreen((f) => !f)} speed={speed} onChangeSpeed={(sp: number) => { setSpeed(sp); setSpeedLocked(sp !== 1); }} autoScroll={autoScroll} onToggleAutoScroll={onToggleAutoScroll} captions={captions} onToggleCaptions={() => setCaptions((c) => !c)} onInterest={(ok: boolean) => { if (!ok) onNextReel?.(); }} />
+      <ReelOptionsSheet
+        visible={optOpen}
+        onClose={() => setOptOpen(false)}
+        fullscreen={fullscreen}
+        onToggleFullscreen={() => setFullscreen((f) => !f)}
+        paused={paused}
+        onTogglePause={() => setPaused((p) => !p)}
+        muted={muted}
+        onToggleMute={() => setMuted((m) => !m)}
+        speed={speed}
+        onChangeSpeed={(sp: number) => { setSpeed(sp); setSpeedLocked(sp !== 1); }}
+        autoScroll={autoScroll}
+        onToggleAutoScroll={onToggleAutoScroll}
+        captions={captions}
+        onToggleCaptions={() => setCaptions((c) => !c)}
+        isInterested={isInterested}
+        onOpenAbout={() => onOpenMoreModal('about', item)}
+        onOpenAskAI={() => onOpenMoreModal('ai', item)}
+        onOpenAudio={() => onOpenMoreModal('audio', item)}
+        onOpenRemix={() => onOpenMoreModal('remix', item)}
+        onOpenWhy={() => onOpenMoreModal('why', item)}
+        onInterested={() => onInterested(item)}
+        onNotInterested={() => onOpenMoreModal('notInterested', item)}
+        onReport={() => onOpenMoreModal('report', item)}
+      />
     </View>
   );
 }
@@ -233,6 +252,7 @@ export default function ReelsScreen() {
   const [shareReel, setShareReel] = useState<any>(null);
   const [likesPost, setLikesPost] = useState<any>(null);
   const [saveTarget, setSaveTarget] = useState<any>(null);
+  const [moreModal, setMoreModal] = useState<{ type: string; reel: any } | null>(null);
   const [toastReelId, setToastReelId] = useState<string | null>(null);
   const timerRef = useRef<any>(null);
 
@@ -253,7 +273,14 @@ export default function ReelsScreen() {
     return () => { u1(); u2(); };
   }, [uid, startId]);
 
-  const shownReels = feedTab === 'following' ? reels.filter((r) => Array.isArray(me?.following) && me.following.includes(r.uid)) : reels;
+  const hiddenIds = new Set(Array.isArray(me?.notInterestedPosts) ? me.notInterestedPosts : []);
+  const shownReels = reels.filter((r) => {
+    if (hiddenIds.has(r.id)) return false;
+    if (!canViewReel(r, usersMap[r.uid], me, uid)) return false;
+    if (feedTab === 'following') return Array.isArray(me?.following) && me.following.includes(r.uid);
+    return true;
+  });
+
   const goNext = (curId: string) => {
     const idx = shownReels.findIndex((r) => r.id === curId);
     if (idx >= 0 && idx + 1 < shownReels.length) listRef.current?.scrollToIndex({ index: idx + 1, animated: true });
@@ -261,6 +288,26 @@ export default function ReelsScreen() {
   const showRepostToast = (rid: string) => { setToastReelId(rid); if (timerRef.current) clearTimeout(timerRef.current); timerRef.current = setTimeout(() => setToastReelId(null), 4000); };
   const undoRepost = async () => { if (!uid || !toastReelId) return; const r = toastReelId; setToastReelId(null); await updateDoc(doc(db, 'posts', r), { reposts: arrayRemove(uid), [`repostThoughts.${uid}`]: deleteField() }).catch(() => {}); };
   const onView = useRef(({ viewableItems }: any) => { if (viewableItems[0]?.item?.id) setActiveId(viewableItems[0].item.id); }).current;
+
+  const handleInterested = async (reel: any) => {
+    try {
+      const res = await saveReelInterest({ reel, myUid: uid, me, interested: true });
+      Alert.alert('Preference Saved', res.alreadyMarked ? 'You already marked this Reel as Interested.' : 'We will show more Reels like this.');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not save preference.');
+    }
+  };
+
+  const handleNotInterested = async (reason: string) => {
+    if (!moreModal?.reel) return;
+    try {
+      await saveReelInterest({ reel: moreModal.reel, myUid: uid, me, interested: false, reason });
+      goNext(moreModal.reel.id);
+      Alert.alert('Feedback Recorded', 'We will show fewer Reels like this.');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not record feedback.');
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -273,7 +320,7 @@ export default function ReelsScreen() {
         ))}
       </View>
       <FlatList ref={listRef} data={shownReels} pagingEnabled windowSize={3} maxToRenderPerBatch={2} showsVerticalScrollIndicator={false} keyExtractor={(i) => i.id} onViewableItemsChanged={onView} viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
-        renderItem={({ item }) => <ReelItem item={item} active={item.id === activeId} focused={focused} me={me} owner={usersMap[item.uid]} autoScroll={autoScroll} onToggleAutoScroll={() => setAutoScroll((v) => !v)} onNextReel={() => goNext(item.id)} onComment={() => setCommentPost(item)} onShare={() => setShareReel(item)} onLikes={() => setLikesPost(item)} onRepostToast={showRepostToast} onSaveSheet={() => setSaveTarget(item)} />}
+        renderItem={({ item }) => <ReelItem item={item} active={item.id === activeId} focused={focused} me={me} owner={usersMap[item.uid]} autoScroll={autoScroll} onToggleAutoScroll={() => setAutoScroll((v) => !v)} onNextReel={() => goNext(item.id)} onComment={() => setCommentPost(item)} onShare={() => setShareReel(item)} onLikes={() => setLikesPost(item)} onRepostToast={showRepostToast} onSaveSheet={() => setSaveTarget(item)} onOpenMoreModal={(type: string, reel: any) => setMoreModal({ type, reel })} onInterested={handleInterested} />}
         ListEmptyComponent={<View style={s.empty}><Ionicons name="videocam-outline" size={48} color="#666" /><Text style={{ color: '#888', marginTop: 10 }}>No reels yet</Text></View>}
       />
       {!!toastReelId && (
@@ -286,6 +333,13 @@ export default function ReelsScreen() {
       <ShareModal post={shareReel} onClose={() => setShareReel(null)} />
       <LikesPlaysModal post={likesPost} onClose={() => setLikesPost(null)} />
       <SaveCollectionSheet visible={!!saveTarget} post={saveTarget} myUid={uid} me={me} onClose={() => setSaveTarget(null)} />
+      <AboutReelModal visible={moreModal?.type === 'about'} reel={moreModal?.reel} owner={usersMap[moreModal?.reel?.uid]} onClose={() => setMoreModal(null)} />
+      <AskFlevoraAIModal visible={moreModal?.type === 'ai'} reel={moreModal?.reel} onClose={() => setMoreModal(null)} />
+      <AudioDetailModal visible={moreModal?.type === 'audio'} reel={moreModal?.reel} owner={usersMap[moreModal?.reel?.uid]} me={me} myUid={uid} usersMap={usersMap} onSelectReel={(rid: string) => { const idx = shownReels.findIndex((r) => r.id === rid); if (idx >= 0) listRef.current?.scrollToIndex({ index: idx, animated: true }); }} onClose={() => setMoreModal(null)} />
+      <RemixSequenceModal visible={moreModal?.type === 'remix'} reel={moreModal?.reel} owner={usersMap[moreModal?.reel?.uid]} me={me} myUid={uid} onClose={() => setMoreModal(null)} />
+      <WhySeeingModal visible={moreModal?.type === 'why'} reel={moreModal?.reel} owner={usersMap[moreModal?.reel?.uid]} me={me} feedTab={feedTab} onClose={() => setMoreModal(null)} />
+      <NotInterestedModal visible={moreModal?.type === 'notInterested'} onSubmit={handleNotInterested} onClose={() => setMoreModal(null)} />
+      <ReportReelModal visible={moreModal?.type === 'report'} reel={moreModal?.reel} myUid={uid} onClose={() => setMoreModal(null)} />
     </View>
   );
 }
@@ -312,4 +366,4 @@ const s = StyleSheet.create({
   toast: { position: 'absolute', left: 12, right: 12, bottom: 12, backgroundColor: '#262626', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 50, elevation: 50 },
   empty: { height: H, justifyContent: 'center', alignItems: 'center' },
 });
-                
+              
