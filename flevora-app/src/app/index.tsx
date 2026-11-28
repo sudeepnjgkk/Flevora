@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Image, TouchableOpacity, Pressable, FlatList, Dimensions, StyleSheet, Alert, RefreshControl } from 'react-native';
+import { View, Text, Image, TouchableOpacity, FlatList, Dimensions, StyleSheet, Alert, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -11,6 +11,8 @@ import { StoryViewerModal } from '../constants/StoryViewerModal';
 import { useTheme, BRAND, NEON } from '../constants/theme';
 import { AnimatedLikeButton, DoubleTapHeartOverlay } from '../constants/LikeComponents';
 import { formatLikesLabel, togglePostLike } from '../constants/likeSystem';
+import { RepostButton, RepostSheetModal, RepostersModal } from '../constants/RepostModals';
+import { saveRepostThought, toggleRepost } from '../constants/repostSystem';
 
 const W = Dimensions.get('window').width;
 
@@ -58,6 +60,8 @@ export default function HomeScreen() {
   const [limitCount, setLimitCount] = useState(10);
   const [commentPost, setCommentPost] = useState<any>(null);
   const [sharePost, setSharePost] = useState<any>(null);
+  const [repostTarget, setRepostTarget] = useState<any>(null);
+  const [repostersUids, setRepostersUids] = useState<string[] | null>(null);
   const [storyList, setStoryList] = useState<any[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -137,9 +141,21 @@ export default function HomeScreen() {
           const hasStory = userStories.length > 0;
           const liked = Array.isArray(item.likes) && item.likes.includes(uid);
           const saved = Array.isArray(me?.savedPosts) && me.savedPosts.includes(item.id);
+          const reposted = Array.isArray(item.reposts) && item.reposts.includes(uid);
+          const reposterFriendUid = (item.reposts || []).find((rUid: string) => rUid !== uid && me?.following?.includes(rUid));
 
           return (
             <View style={[s.card, { borderBottomColor: c.border }]}>
+              {!!reposterFriendUid && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingTop: 8 }}>
+                  <Ionicons name="repeat" size={14} color="#10B981" />
+                  <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }} numberOfLines={1}>
+                    @{userMap[reposterFriendUid]?.username || 'friend'} reposted
+                    {item.repostThoughts?.[reposterFriendUid] ? ` • "${item.repostThoughts[reposterFriendUid]}"` : ''}
+                  </Text>
+                </View>
+              )}
+
               <View style={s.rowHead}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <TouchableOpacity onPress={() => (hasStory ? setStoryList(userStories) : router.push(`/user/${item.uid}` as any))} onLongPress={() => onAvatarLongPress(item.uid, userStories)} style={[s.avRing, { borderColor: hasStory ? NEON.pink : 'transparent' }]}>
@@ -162,9 +178,15 @@ export default function HomeScreen() {
               )}
 
               <View style={s.actions}>
-                <View style={{ flexDirection: 'row', gap: 18, alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>
                   <AnimatedLikeButton liked={liked} onPress={() => toggleLike(item, false)} />
                   <TouchableOpacity onPress={() => setCommentPost(item)}><Ionicons name="chatbubble-outline" size={23} color={c.text} /></TouchableOpacity>
+                  <RepostButton
+                    reposted={reposted}
+                    count={item.reposts?.length || 0}
+                    onPress={() => setRepostTarget(item)}
+                    onLongPressCount={() => setRepostersUids(item.reposts || [])}
+                  />
                   <TouchableOpacity onPress={() => setSharePost(item)}><Ionicons name="paper-plane-outline" size={23} color={c.text} /></TouchableOpacity>
                 </View>
                 <TouchableOpacity onPress={() => uid && updateDoc(doc(db, 'users', uid), { savedPosts: saved ? arrayRemove(item.id) : arrayUnion(item.id) })}>
@@ -174,6 +196,9 @@ export default function HomeScreen() {
 
               <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
                 <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>{formatLikesLabel(item.likes?.length || 0)}</Text>
+                {!!item.repostThoughts?.[uid] && (
+                  <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '600', marginTop: 2 }}>Your thought: "{item.repostThoughts[uid]}"</Text>
+                )}
                 {!!item.caption && <Text style={{ color: c.text, marginTop: 3 }}><Text style={{ fontWeight: '700' }}>@{uname} </Text>{item.caption}</Text>}
                 {!!item.commentsCount && <TouchableOpacity onPress={() => setCommentPost(item)}><Text style={{ color: c.muted, fontSize: 12, marginTop: 3 }}>View all {item.commentsCount} comments</Text></TouchableOpacity>}
                 <Text style={{ color: c.muted, fontSize: 11, marginTop: 3 }}>{formatTime(item.createdAt)}</Text>
@@ -185,6 +210,17 @@ export default function HomeScreen() {
       <CommentModal postId={commentPost?.id || null} post={commentPost} onClose={() => setCommentPost(null)} />
       <ShareModal post={sharePost} onClose={() => setSharePost(null)} />
       <StoryViewerModal visible={!!storyList} stories={storyList || []} onClose={() => setStoryList(null)} onAddStory={() => {}} />
+      <RepostSheetModal
+        visible={!!repostTarget}
+        post={repostTarget}
+        myUid={uid}
+        onClose={() => setRepostTarget(null)}
+        onRepost={(th) => toggleRepost({ post: repostTarget, myUid: uid, me, owner: userMap[repostTarget.uid], thought: th })}
+        onSaveThought={(th) => saveRepostThought(repostTarget.id, uid, th)}
+        onRemoveRepost={() => toggleRepost({ post: repostTarget, myUid: uid, me, forceRemove: true })}
+        onOpenReposters={() => setRepostersUids(repostTarget.reposts || [])}
+      />
+      <RepostersModal visible={!!repostersUids} uids={repostersUids || []} me={me} myUid={uid} onClose={() => setRepostersUids(null)} />
     </View>
   );
 }
@@ -199,3 +235,4 @@ const s = StyleSheet.create({
   volBtn: { position: 'absolute', right: 12, bottom: 12, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', zIndex: 20, elevation: 20 },
   actions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
 });
+                  
