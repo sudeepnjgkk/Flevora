@@ -16,6 +16,7 @@ import { fetchTaggedPostsPage, fetchUserPostsPage, fetchUserStories } from '../.
 import { fetchUserRepostsPage } from '../../constants/repostSystem';
 import { FollowListModal, shareProfileLink } from '../../constants/ProfileSubModals';
 import { ReportAccountModal, VisitorMoreModal, VisitorStoryModal, showProfileLinkDialog } from '../../constants/VisitorProfileModals';
+import { NoteDetailModal, canSeeNote } from '../../constants/NoteModal';
 
 const W = (Dimensions.get('window').width - 4) / 3;
 
@@ -26,6 +27,8 @@ export default function UserProfileScreen() {
   const myUid = auth.currentUser?.uid || '';
 
   const [profile, setProfile] = useState<any>(null);
+  const [visitorNote, setVisitorNote] = useState<any>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [me, setMe] = useState<any>(null);
@@ -67,7 +70,8 @@ export default function UserProfileScreen() {
       () => setErrorMsg('Could not load this profile. Check permissions or connection.')
     );
     const u2 = myUid ? onSnapshot(doc(db, 'users', myUid), (s) => { if (s.exists()) setMe({ id: s.id, ...s.data() }); }) : () => {};
-    return () => { u1(); u2(); };
+    const u3 = onSnapshot(doc(db, 'notes', id), (s) => setVisitorNote(s.exists() ? { id: s.id, ...s.data() } : null), () => {});
+    return () => { u1(); u2(); u3(); };
   }, [id, myUid]);
 
   const blocked = useMemo(() => isBlockedBetween(me, profile, myUid), [me, profile, myUid]);
@@ -100,8 +104,7 @@ export default function UserProfileScreen() {
       fetchUserRepostsPage(id, null, 18).then((r) => setRepostPosts(r.items)).catch(() => {});
     }
   }, [canView, tab, profile?.username, id]);
-
-  const handleFollowPress = async () => {
+    const handleFollowPress = async () => {
     if (!myUid) return Alert.alert('Sign In Required', 'Please sign in to follow users.');
     if (followBusy || !profile || blocked) return;
     if (isFollowing) {
@@ -145,7 +148,8 @@ export default function UserProfileScreen() {
     await updateDoc(doc(db, 'users', myUid), { [field]: exists ? arrayRemove(id) : arrayUnion(id) });
     Alert.alert(exists ? `Un${label}` : label, `@${profile.username} updated.`);
   };
-        if (unavailable) {
+
+  if (unavailable) {
     return (
       <View style={[styles.center, { backgroundColor: c.background }]}>
         <Ionicons name="person-remove-outline" size={44} color={c.muted} />
@@ -170,6 +174,7 @@ export default function UserProfileScreen() {
   const iBlocked = Array.isArray(me?.blockedUsers) && me.blockedUsers.includes(id);
   const isMuted = Array.isArray(me?.mutedUsers) && me.mutedUsers.includes(id);
   const isRestricted = Array.isArray(me?.restrictedUsers) && me.restrictedUsers.includes(id);
+  const activeVisitorNote = canSeeNote(visitorNote, myUid, id, me, profile) ? visitorNote : null;
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
@@ -197,13 +202,22 @@ export default function UserProfileScreen() {
         ListHeaderComponent={
           <View style={{ paddingHorizontal: 14 }}>
             <View style={styles.infoRow}>
-              <TouchableOpacity disabled={activeStories.length === 0} onPress={() => setStoryViewer({ open: true, title: `@${profile.username}`, items: activeStories })} style={[styles.ring, { borderColor: activeStories.length > 0 ? '#EC4899' : 'transparent', borderWidth: activeStories.length > 0 ? 2.5 : 0 }]}>
-                {profile.avatar ? <Image source={{ uri: profile.avatar }} style={styles.avatar} /> : (
-                  <View style={[styles.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
-                    <Text style={{ color: BRAND_TEXT, fontSize: 26, fontWeight: '700' }}>{(profile.username || 'U')[0].toUpperCase()}</Text>
-                  </View>
+              <View style={{ alignItems: 'center' }}>
+                {!!activeVisitorNote && (
+                  <TouchableOpacity onPress={() => setNoteOpen(true)} style={[styles.noteChip, { backgroundColor: c.card, borderColor: activeVisitorNote.audience === 'closeFriends' ? '#10B981' : c.border }]}>
+                    <Text style={{ color: c.text, fontSize: 11, fontWeight: '700' }} numberOfLines={1}>
+                      {activeVisitorNote.promptQuestion || activeVisitorNote.text || 'Note'}
+                    </Text>
+                  </TouchableOpacity>
                 )}
-              </TouchableOpacity>
+                <TouchableOpacity disabled={activeStories.length === 0} onPress={() => setStoryViewer({ open: true, title: `@${profile.username}`, items: activeStories })} style={[styles.ring, { borderColor: activeStories.length > 0 ? '#EC4899' : 'transparent', borderWidth: activeStories.length > 0 ? 2.5 : 0 }]}>
+                  {profile.avatar ? <Image source={{ uri: profile.avatar }} style={styles.avatar} /> : (
+                    <View style={[styles.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
+                      <Text style={{ color: BRAND_TEXT, fontSize: 26, fontWeight: '700' }}>{(profile.username || 'U')[0].toUpperCase()}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
               <View style={styles.statsRow}>
                 <View style={styles.stat}><Text style={[styles.statNum, { color: c.text }]}>{canView ? posts.length : '—'}</Text><Text style={{ color: c.muted, fontSize: 12 }}>Posts</Text></View>
                 <TouchableOpacity style={styles.stat} disabled={!canView} onPress={() => setFollowMode('followers')}><Text style={[styles.statNum, { color: c.text }]}>{profile.followers?.length || 0}</Text><Text style={{ color: c.muted, fontSize: 12 }}>Followers</Text></TouchableOpacity>
@@ -270,6 +284,7 @@ export default function UserProfileScreen() {
 
       <FollowListModal mode={followMode} ids={followMode === 'followers' ? (profile.followers || []) : (profile.following || [])} ownerUid={id} me={me} myUid={myUid} onClose={() => setFollowMode(null)} />
       <ExplorePostModal post={selectedPost} author={profile} me={me} onClose={() => setSelectedPost(null)} onPressTag={(t) => router.navigate({ pathname: '/explore', params: { q: t } } as any)} onPressPlace={(p) => router.navigate({ pathname: '/explore', params: { q: p } } as any)} />
+      <NoteDetailModal visible={noteOpen} note={activeVisitorNote} owner={profile} me={me} myUid={myUid} onReplyDm={() => handleMessagePress()} onClose={() => setNoteOpen(false)} />
       <VisitorStoryModal visible={storyViewer.open} title={storyViewer.title} stories={storyViewer.items} onClose={() => setStoryViewer({ open: false, title: '', items: [] })} />
       <ReportAccountModal visible={reportOpen} targetUser={profile} myUid={myUid} onClose={() => setReportOpen(false)} />
       <VisitorMoreModal visible={moreOpen} profile={profile} isFollowing={isFollowing} isRequested={isRequested} isBlocked={iBlocked} isMuted={isMuted} isRestricted={isRestricted} onClose={() => setMoreOpen(false)} onShare={() => shareProfileLink(id, profile.username || 'user')} onCopyLink={() => showProfileLinkDialog(id, profile.username || 'user')} onAbout={() => Alert.alert(`About @${profile.username}`, `Username: @${profile.username}\nAccount Type: ${profile.accountType || 'Personal'}\nPrivate: ${profile.isPrivate ? 'Yes' : 'No'}`)} onMute={() => toggleListField('mutedUsers', 'Muted')} onRestrict={() => toggleListField('restrictedUsers', 'Restricted')} onUnfollow={handleFollowPress} onCancelReq={handleFollowPress} onBlock={handleBlockToggle} onReport={() => setReportOpen(true)} />
@@ -283,6 +298,7 @@ const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingBottom: 10 },
   topTitle: { fontSize: 18, fontWeight: '800' },
   infoRow: { flexDirection: 'row', alignItems: 'center', gap: 18, marginBottom: 10 },
+  noteChip: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, marginBottom: -6, zIndex: 5, maxWidth: 92 },
   ring: { padding: 3, borderRadius: 46 },
   avatar: { width: 80, height: 80, borderRadius: 40 },
   statsRow: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
@@ -298,4 +314,4 @@ const styles = StyleSheet.create({
   gridImg: { width: W, height: W },
   badge: { position: 'absolute', top: 6, right: 6 },
 });
-                                                                                                                                                                                                                                       
+                                                                                                                                    
