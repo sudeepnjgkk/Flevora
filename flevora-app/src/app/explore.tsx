@@ -5,9 +5,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { doc, onSnapshot, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
+import { collection, doc, getDocs, limit, onSnapshot, query, where, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { auth, db } from '../config';
-import { useTheme, BRAND } from '../constants/theme';
+import { useTheme, BRAND, BRAND_TEXT } from '../constants/theme';
 import { ExplorePostModal } from '../constants/ExplorePostModal';
 import { AccountRow, ExploreSkeleton, ExploreTile, HighlightedText } from '../constants/SearchExploreViews';
 import {
@@ -16,6 +16,9 @@ import {
   loadSearchHistory, removeSearchHistoryItem, saveSearchHistory, scorePostMatch,
   searchAccounts, toggleFollowUser,
 } from '../constants/searchHelpers';
+import { canViewChannel, getChannelRole, joinChannelIdempotent } from '../constants/broadcastCapabilities';
+import { BroadcastRoomModal } from '../constants/BroadcastRoomModal';
+import { BroadcastChannelsHub } from '../constants/BroadcastChannelsHub';
 
 export default function ExploreScreen() {
   const router = useRouter();
@@ -27,7 +30,7 @@ export default function ExploreScreen() {
   const [queryText, setQueryText] = useState(params.q || '');
   const [submittedQuery, setSubmittedQuery] = useState(params.q || '');
   const [isFocused, setIsFocused] = useState(false);
-  const [activeTab, setActiveTab] = useState<SearchTab>('top');
+  const [activeTab, setActiveTab] = useState<SearchTab | 'channels'>('top');
   const [history, setHistory] = useState<string[]>([]);
 
   const [explorePosts, setExplorePosts] = useState<any[]>([]);
@@ -42,6 +45,9 @@ export default function ExploreScreen() {
   const [suggestUsers, setSuggestUsers] = useState<any[]>([]);
   const [searchUsers, setSearchUsers] = useState<any[]>([]);
   const [searchReels, setSearchReels] = useState<any[]>([]);
+  const [publicChannels, setPublicChannels] = useState<any[]>([]);
+  const [activeCh, setActiveCh] = useState<any>(null);
+  const [hubOpen, setHubOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
@@ -56,31 +62,31 @@ export default function ExploreScreen() {
   const reqIdRef = useRef(0);
 
   useEffect(() => {
-    if (params.q) {
-      setQueryText(params.q);
-      runSubmitSearch(params.q);
-    }
+    if (params.q) { setQueryText(params.q); runSubmitSearch(params.q); }
   }, [params.q]);
 
   useEffect(() => {
     loadSearchHistory(myUid).then(setHistory);
     if (!myUid) return;
-    return onSnapshot(doc(db, 'users', myUid), (s) => {
-      if (s.exists()) setMe({ id: s.id, ...s.data() });
-    });
+    return onSnapshot(doc(db, 'users', myUid), (s) => { if (s.exists()) setMe({ id: s.id, ...s.data() }); });
   }, [myUid]);
 
   const loadInitialExplore = useCallback(async () => {
     setExploreLoading(true);
     setExploreError(null);
     try {
-      const [page, users] = await Promise.all([fetchExplorePostsPage(null, 18), searchAccounts('', 30)]);
+      const [page, users, chSnap] = await Promise.all([
+        fetchExplorePostsPage(null, 18),
+        searchAccounts('', 30),
+        getDocs(query(collection(db, 'channels'), where('visibility', '==', 'public'), limit(30))),
+      ]);
       const uMap: Record<string, any> = {};
       users.forEach((u) => { uMap[u.id] = u; });
       setUserCache((prev) => ({ ...prev, ...uMap }));
       setExplorePosts(page.items);
       setExploreCursor(page.lastDoc);
       setExploreHasMore(page.hasMore);
+      setPublicChannels(chSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch {
       setExploreError('Could not load Explore right now. Check your connection.');
     } finally {
@@ -102,18 +108,12 @@ export default function ExploreScreen() {
       });
       setExploreCursor(page.lastDoc);
       setExploreHasMore(page.hasMore);
-    } catch {
-    } finally {
-      setExploreMoreLoading(false);
-    }
+    } catch {} finally { setExploreMoreLoading(false); }
   };
 
   useEffect(() => {
     const clean = queryText.trim();
-    if (!clean || submittedQuery === clean) {
-      if (!clean) setSuggestUsers([]);
-      return;
-    }
+    if (!clean || submittedQuery === clean) { if (!clean) setSuggestUsers([]); return; }
     const currentId = ++reqIdRef.current;
     const timer = setTimeout(async () => {
       try {
@@ -131,18 +131,11 @@ export default function ExploreScreen() {
   const runSubmitSearch = async (rawTerm: string) => {
     const clean = rawTerm.trim();
     if (!clean) return;
-    Keyboard.dismiss();
-    setIsFocused(false);
-    setDrillMode(null);
-    setSubmittedQuery(clean);
-    setQueryText(clean);
-    setSearchLoading(true);
-    setSearchError(null);
+    Keyboard.dismiss(); setIsFocused(false); setDrillMode(null);
+    setSubmittedQuery(clean); setQueryText(clean);
+    setSearchLoading(true); setSearchError(null);
     const currentId = ++reqIdRef.current;
-
-    const updatedHist = await saveSearchHistory(myUid, clean);
-    setHistory(updatedHist);
-
+    setHistory(await saveSearchHistory(myUid, clean));
     try {
       const [users, reelsPage] = await Promise.all([searchAccounts(clean, 25), fetchReelsPage(null, 24)]);
       if (reqIdRef.current !== currentId) return;
@@ -157,137 +150,68 @@ export default function ExploreScreen() {
       if (reqIdRef.current === currentId) setSearchLoading(false);
     }
   };
-
-  const openHashtagView = async (rawTag: string) => {
+    const openHashtagView = async (rawTag: string) => {
     const norm = rawTag.trim().toLowerCase().startsWith('#') ? rawTag.trim().toLowerCase() : `#${rawTag.trim().toLowerCase()}`;
-    setDrillMode({ type: 'tag', value: norm });
-    setDrillLoading(true);
-    setDrillError(null);
+    setDrillMode({ type: 'tag', value: norm }); setDrillLoading(true); setDrillError(null);
     try {
       const page = await fetchHashtagPostsPage(norm, null, 18);
-      setDrillPosts(page.items);
-      setDrillCursor(page.lastDoc);
-      setDrillHasMore(page.hasMore);
-    } catch {
-      setDrillError('Failed to load hashtag posts.');
-    } finally {
-      setDrillLoading(false);
-    }
+      setDrillPosts(page.items); setDrillCursor(page.lastDoc); setDrillHasMore(page.hasMore);
+    } catch { setDrillError('Failed to load hashtag posts.'); } finally { setDrillLoading(false); }
   };
 
   const loadMoreHashtag = async () => {
     if (!drillMode || drillMode.type !== 'tag' || drillLoading || !drillHasMore || !drillCursor) return;
     const page = await fetchHashtagPostsPage(drillMode.value, drillCursor, 18);
-    setDrillPosts((prev) => {
-      const seen = new Set(prev.map((x) => x.id));
-      return [...prev, ...page.items.filter((x) => !seen.has(x.id))];
-    });
-    setDrillCursor(page.lastDoc);
-    setDrillHasMore(page.hasMore);
+    setDrillPosts((prev) => { const seen = new Set(prev.map((x) => x.id)); return [...prev, ...page.items.filter((x) => !seen.has(x.id))]; });
+    setDrillCursor(page.lastDoc); setDrillHasMore(page.hasMore);
   };
 
   const openPlaceView = (place: string) => {
-    setDrillMode({ type: 'place', value: place });
-    setDrillError(null);
-    setDrillHasMore(false);
-    const filtered = authorizedExplorePosts.filter((p) => (p.location || '').trim().toLowerCase() === place.toLowerCase());
-    setDrillPosts(filtered);
+    setDrillMode({ type: 'place', value: place }); setDrillError(null); setDrillHasMore(false);
+    setDrillPosts(authorizedExplorePosts.filter((p) => (p.location || '').trim().toLowerCase() === place.toLowerCase()));
   };
 
-  const authorizedExplorePosts = useMemo(
-    () => explorePosts.filter((p) => canViewPost(p, userCache[p.uid], me, myUid)),
-    [explorePosts, userCache, me, myUid]
-  );
+  const authorizedExplorePosts = useMemo(() => explorePosts.filter((p) => canViewPost(p, userCache[p.uid], me, myUid)), [explorePosts, userCache, me, myUid]);
   const trendingTags = useMemo(() => extractRealHashtags(authorizedExplorePosts).slice(0, 10), [authorizedExplorePosts]);
   const allPlaces = useMemo(() => extractRealPlaces(authorizedExplorePosts), [authorizedExplorePosts]);
   const suggestedCreators = useMemo(() => {
     const following: string[] = Array.isArray(me?.following) ? me.following : [];
-    return Object.values(userCache)
-      .filter((u) => u.id !== myUid && !following.includes(u.id) && canViewAccount(u, me, myUid))
-      .slice(0, 12);
+    return Object.values(userCache).filter((u) => u.id !== myUid && !following.includes(u.id) && canViewAccount(u, me, myUid)).slice(0, 12);
   }, [userCache, me, myUid]);
 
   const qLower = submittedQuery.trim().toLowerCase();
   const matchedAccounts = useMemo(() => searchUsers.filter((u) => canViewAccount(u, me, myUid)), [searchUsers, me, myUid]);
-  const matchedPosts = useMemo(
-    () => authorizedExplorePosts
-      .map((p) => ({ post: p, score: scorePostMatch(p, qLower) }))
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((x) => x.post),
-    [authorizedExplorePosts, qLower]
-  );
-  const matchedReels = useMemo(
-    () => searchReels
-      .filter((p) => canViewPost(p, userCache[p.uid], me, myUid))
-      .map((p) => ({ post: p, score: scorePostMatch(p, qLower) }))
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((x) => x.post),
-    [searchReels, userCache, me, myUid, qLower]
-  );
+  const matchedChannels = useMemo(() => publicChannels.filter((ch) => canViewChannel(ch, myUid, me) && ((ch.name || '').toLowerCase().includes(qLower) || (ch.description || '').toLowerCase().includes(qLower) || (ch.ownerUsername || '').toLowerCase().includes(qLower) || (ch.category || '').toLowerCase().includes(qLower))), [publicChannels, myUid, me, qLower]);
+  const matchedPosts = useMemo(() => authorizedExplorePosts.map((p) => ({ post: p, score: scorePostMatch(p, qLower) })).filter((x) => x.score > 0).sort((a, b) => b.score - a.score).map((x) => x.post), [authorizedExplorePosts, qLower]);
+  const matchedReels = useMemo(() => searchReels.filter((p) => canViewPost(p, userCache[p.uid], me, myUid)).map((p) => ({ post: p, score: scorePostMatch(p, qLower) })).filter((x) => x.score > 0).sort((a, b) => b.score - a.score).map((x) => x.post), [searchReels, userCache, me, myUid, qLower]);
   const matchedTags = useMemo(() => extractRealHashtags(authorizedExplorePosts, qLower), [authorizedExplorePosts, qLower]);
   const matchedPlaces = useMemo(() => extractRealPlaces(authorizedExplorePosts, qLower), [authorizedExplorePosts, qLower]);
 
-  const tabs: { key: SearchTab; label: string }[] = useMemo(() => {
-    const base: { key: SearchTab; label: string }[] = [
-      { key: 'top', label: 'Top' },
-      { key: 'accounts', label: 'Accounts' },
-      { key: 'posts', label: 'Posts' },
-      { key: 'reels', label: 'Reels' },
-      { key: 'tags', label: 'Tags' },
+  const tabs: { key: SearchTab | 'channels'; label: string }[] = useMemo(() => {
+    const base: { key: SearchTab | 'channels'; label: string }[] = [
+      { key: 'top', label: 'Top' }, { key: 'accounts', label: 'Accounts' }, { key: 'channels', label: 'Channels' },
+      { key: 'posts', label: 'Posts' }, { key: 'reels', label: 'Reels' }, { key: 'tags', label: 'Tags' },
     ];
     if (allPlaces.length > 0) base.push({ key: 'places', label: 'Places' });
     return base;
   }, [allPlaces.length]);
 
-  const clearAllInput = () => {
-    setQueryText('');
-    setSubmittedQuery('');
-    setDrillMode(null);
-    setSearchError(null);
-  };
-    if (drillMode) {
+  const clearAllInput = () => { setQueryText(''); setSubmittedQuery(''); setDrillMode(null); setSearchError(null); };
+
+  if (drillMode) {
     const safeDrillPosts = drillPosts.filter((p) => canViewPost(p, userCache[p.uid], me, myUid));
     return (
       <View style={[styles.container, { backgroundColor: c.background }]}>
         <View style={[styles.drillHeader, { borderBottomColor: c.border }]}>
-          <TouchableOpacity onPress={() => setDrillMode(null)} style={{ padding: 4 }}>
-            <Ionicons name="arrow-back" size={24} color={c.text} />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: c.text, fontWeight: '800', fontSize: 17 }}>{drillMode.value}</Text>
-            <Text style={{ color: c.muted, fontSize: 12 }}>{safeDrillPosts.length} posts</Text>
-          </View>
+          <TouchableOpacity onPress={() => setDrillMode(null)} style={{ padding: 4 }}><Ionicons name="arrow-back" size={24} color={c.text} /></TouchableOpacity>
+          <View style={{ flex: 1 }}><Text style={{ color: c.text, fontWeight: '800', fontSize: 17 }}>{drillMode.value}</Text><Text style={{ color: c.muted, fontSize: 12 }}>{safeDrillPosts.length} posts</Text></View>
         </View>
-        {drillLoading ? (
-          <ExploreSkeleton />
-        ) : drillError ? (
-          <View style={styles.center}>
-            <Text style={{ color: c.muted, marginBottom: 10 }}>{drillError}</Text>
-            <TouchableOpacity onPress={() => drillMode.type === 'tag' ? openHashtagView(drillMode.value) : openPlaceView(drillMode.value)} style={[styles.retryBtn, { backgroundColor: BRAND }]}>
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Retry</Text>
-            </TouchableOpacity>
-          </View>
+        {drillLoading ? <ExploreSkeleton /> : drillError ? (
+          <View style={styles.center}><Text style={{ color: c.muted, marginBottom: 10 }}>{drillError}</Text><TouchableOpacity onPress={() => drillMode.type === 'tag' ? openHashtagView(drillMode.value) : openPlaceView(drillMode.value)} style={[styles.retryBtn, { backgroundColor: BRAND }]}><Text style={{ color: BRAND_TEXT, fontWeight: '700' }}>Retry</Text></TouchableOpacity></View>
         ) : (
-          <FlatList
-            data={safeDrillPosts}
-            numColumns={3}
-            keyExtractor={(i) => i.id}
-            onEndReached={loadMoreHashtag}
-            onEndReachedThreshold={0.4}
-            ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No public posts found for {drillMode.value}.</Text>}
-            renderItem={({ item }) => <ExploreTile item={item} onPress={() => setSelectedPost(item)} />}
-          />
+          <FlatList data={safeDrillPosts} numColumns={3} keyExtractor={(i) => i.id} onEndReached={loadMoreHashtag} onEndReachedThreshold={0.4} ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No public posts found.</Text>} renderItem={({ item }) => <ExploreTile item={item} onPress={() => setSelectedPost(item)} />} />
         )}
-        <ExplorePostModal
-          post={selectedPost}
-          author={selectedPost ? userCache[selectedPost.uid] : null}
-          me={me}
-          onClose={() => setSelectedPost(null)}
-          onPressTag={openHashtagView}
-          onPressPlace={openPlaceView}
-        />
+        <ExplorePostModal post={selectedPost} author={selectedPost ? userCache[selectedPost.uid] : null} me={me} onClose={() => setSelectedPost(null)} onPressTag={openHashtagView} onPressPlace={openPlaceView} />
       </View>
     );
   }
@@ -297,29 +221,11 @@ export default function ExploreScreen() {
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
       <View style={styles.searchBarRow}>
-        {(isFocused || !!submittedQuery) && (
-          <TouchableOpacity onPress={() => { setIsFocused(false); clearAllInput(); Keyboard.dismiss(); }} style={{ paddingRight: 8 }}>
-            <Ionicons name="arrow-back" size={23} color={c.text} />
-          </TouchableOpacity>
-        )}
+        {(isFocused || !!submittedQuery) && <TouchableOpacity onPress={() => { setIsFocused(false); clearAllInput(); Keyboard.dismiss(); }} style={{ paddingRight: 8 }}><Ionicons name="arrow-back" size={23} color={c.text} /></TouchableOpacity>}
         <View style={[styles.searchBox, { backgroundColor: c.input, borderColor: c.border }]}>
           <Ionicons name="search" size={18} color={c.muted} />
-          <TextInput
-            style={[styles.input, { color: c.text }]}
-            placeholder="Search people, posts, reels..."
-            placeholderTextColor={c.muted}
-            value={queryText}
-            returnKeyType="search"
-            autoCapitalize="none"
-            onFocus={() => setIsFocused(true)}
-            onChangeText={(t) => { setQueryText(t); if (submittedQuery && t.trim() !== submittedQuery) setSubmittedQuery(''); }}
-            onSubmitEditing={() => runSubmitSearch(queryText)}
-          />
-          {!!queryText && (
-            <TouchableOpacity onPress={clearAllInput}>
-              <Ionicons name="close-circle" size={18} color={c.muted} />
-            </TouchableOpacity>
-          )}
+          <TextInput style={[styles.input, { color: c.text }]} placeholder="Search people, channels, posts..." placeholderTextColor={c.muted} value={queryText} returnKeyType="search" autoCapitalize="none" onFocus={() => setIsFocused(true)} onChangeText={(t) => { setQueryText(t); if (submittedQuery && t.trim() !== submittedQuery) setSubmittedQuery(''); }} onSubmitEditing={() => runSubmitSearch(queryText)} />
+          {!!queryText && <TouchableOpacity onPress={clearAllInput}><Ionicons name="close-circle" size={18} color={c.muted} /></TouchableOpacity>}
         </View>
       </View>
 
@@ -327,59 +233,23 @@ export default function ExploreScreen() {
         <ScrollView keyboardShouldPersistTaps="handled" style={{ flex: 1 }}>
           {!queryText.trim() && history.length > 0 && (
             <View style={{ paddingTop: 10 }}>
-              <View style={styles.secHead}>
-                <Text style={{ color: c.text, fontWeight: '700', fontSize: 15 }}>Recent</Text>
-                <TouchableOpacity onPress={async () => setHistory(await clearSearchHistoryAll(myUid))}>
-                  <Text style={{ color: BRAND, fontWeight: '700', fontSize: 13 }}>Clear All</Text>
-                </TouchableOpacity>
-              </View>
+              <View style={styles.secHead}><Text style={{ color: c.text, fontWeight: '700', fontSize: 15 }}>Recent</Text><TouchableOpacity onPress={async () => setHistory(await clearSearchHistoryAll(myUid))}><Text style={{ color: BRAND, fontWeight: '700', fontSize: 13 }}>Clear All</Text></TouchableOpacity></View>
               {history.map((term) => (
                 <View key={term} style={styles.sugRow}>
-                  <TouchableOpacity style={styles.sugLeft} onPress={() => runSubmitSearch(term)}>
-                    <Ionicons name="time-outline" size={20} color={c.muted} />
-                    <Text style={{ color: c.text, fontSize: 14 }}>{term}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={async () => setHistory(await removeSearchHistoryItem(myUid, term))}>
-                    <Ionicons name="close" size={18} color={c.muted} />
-                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.sugLeft} onPress={() => runSubmitSearch(term)}><Ionicons name="time-outline" size={20} color={c.muted} /><Text style={{ color: c.text, fontSize: 14 }}>{term}</Text></TouchableOpacity>
+                  <TouchableOpacity onPress={async () => setHistory(await removeSearchHistoryItem(myUid, term))}><Ionicons name="close" size={18} color={c.muted} /></TouchableOpacity>
                 </View>
               ))}
             </View>
           )}
-
           {!!queryText.trim() && (
             <View style={{ paddingTop: 6 }}>
-              <TouchableOpacity style={styles.sugRow} onPress={() => runSubmitSearch(queryText)}>
-                <View style={styles.sugLeft}>
-                  <Ionicons name="search" size={18} color={BRAND} />
-                  <Text style={{ color: BRAND, fontWeight: '700', fontSize: 14 }}>Search "{queryText.trim()}"</Text>
-                </View>
-              </TouchableOpacity>
+              <TouchableOpacity style={styles.sugRow} onPress={() => runSubmitSearch(queryText)}><View style={styles.sugLeft}><Ionicons name="search" size={18} color={BRAND} /><Text style={{ color: BRAND, fontWeight: '700', fontSize: 14 }}>Search "{queryText.trim()}"</Text></View></TouchableOpacity>
               {suggestUsers.map((u) => (
                 <TouchableOpacity key={u.id} style={styles.sugRow} onPress={() => { saveSearchHistory(myUid, `@${u.username}`).then(setHistory); router.navigate(`/user/${u.id}` as any); }}>
                   <View style={styles.sugLeft}>
-                    {u.avatar ? <Image source={{ uri: u.avatar }} style={styles.sugAv} /> : (
-                      <View style={[styles.sugAv, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
-                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{(u.username || 'U')[0].toUpperCase()}</Text>
-                      </View>
-                    )}
-                    <View>
-                      <HighlightedText text={`@${u.username}`} query={queryText} style={{ color: c.text, fontWeight: '600', fontSize: 14 }} />
-                      {!!u.fullName && <HighlightedText text={u.fullName} query={queryText} style={{ color: c.muted, fontSize: 12 }} />}
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              ))}
-              {extractRealHashtags(authorizedExplorePosts, queryText).slice(0, 5).map((h) => (
-                <TouchableOpacity key={h.tag} style={styles.sugRow} onPress={() => openHashtagView(h.tag)}>
-                  <View style={styles.sugLeft}>
-                    <View style={[styles.hashIcon, { borderColor: c.border }]}>
-                      <Text style={{ color: c.text, fontWeight: '800' }}>#</Text>
-                    </View>
-                    <View>
-                      <HighlightedText text={h.tag} query={queryText} style={{ color: c.text, fontWeight: '600', fontSize: 14 }} />
-                      <Text style={{ color: c.muted, fontSize: 12 }}>{h.count} posts</Text>
-                    </View>
+                    {u.avatar ? <Image source={{ uri: u.avatar }} style={styles.sugAv} /> : <View style={[styles.sugAv, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Text style={{ color: BRAND_TEXT, fontWeight: '700', fontSize: 12 }}>{(u.username || 'U')[0].toUpperCase()}</Text></View>}
+                    <View><HighlightedText text={`@${u.username}`} query={queryText} style={{ color: c.text, fontWeight: '600', fontSize: 14 }} />{!!u.fullName && <HighlightedText text={u.fullName} query={queryText} style={{ color: c.muted, fontSize: 12 }} />}</View>
                   </View>
                 </TouchableOpacity>
               ))}
@@ -391,146 +261,62 @@ export default function ExploreScreen() {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tabBar, { borderBottomColor: c.border }]} contentContainerStyle={{ paddingHorizontal: 12, gap: 18 }}>
             {tabs.map((t) => {
               const active = activeTab === t.key;
-              return (
-                <TouchableOpacity key={t.key} onPress={() => setActiveTab(t.key)} style={[styles.tabItem, active && { borderBottomColor: BRAND, borderBottomWidth: 2 }]}>
-                  <Text style={{ color: active ? c.text : c.muted, fontWeight: active ? '800' : '600', fontSize: 14 }}>{t.label}</Text>
-                </TouchableOpacity>
-              );
+              return <TouchableOpacity key={t.key} onPress={() => setActiveTab(t.key)} style={[styles.tabItem, active && { borderBottomColor: BRAND, borderBottomWidth: 2 }]}><Text style={{ color: active ? c.text : c.muted, fontWeight: active ? '800' : '600', fontSize: 14 }}>{t.label}</Text></TouchableOpacity>;
             })}
           </ScrollView>
-
-          {searchLoading ? (
-            <View style={styles.center}><ActivityIndicator size="large" color={BRAND} /></View>
-          ) : searchError ? (
-            <View style={styles.center}>
-              <Text style={{ color: c.muted, marginBottom: 10 }}>{searchError}</Text>
-              <TouchableOpacity onPress={() => runSubmitSearch(submittedQuery)} style={[styles.retryBtn, { backgroundColor: BRAND }]}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>Retry</Text>
-              </TouchableOpacity>
-            </View>
+          {searchLoading ? <View style={styles.center}><ActivityIndicator size="large" color={BRAND} /></View> : searchError ? (
+            <View style={styles.center}><Text style={{ color: c.muted, marginBottom: 10 }}>{searchError}</Text><TouchableOpacity onPress={() => runSubmitSearch(submittedQuery)} style={[styles.retryBtn, { backgroundColor: BRAND }]}><Text style={{ color: BRAND_TEXT, fontWeight: '700' }}>Retry</Text></TouchableOpacity></View>
+          ) : activeTab === 'channels' ? (
+            <FlatList
+              data={matchedChannels}
+              keyExtractor={(i) => i.id}
+              ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No channels found for "{submittedQuery}".</Text>}
+              renderItem={({ item }) => {
+                const isMem = getChannelRole(item, myUid) !== 'none';
+                return (
+                  <TouchableOpacity style={styles.sugRow} onPress={() => setActiveCh(item)}>
+                    <View style={styles.sugLeft}><Ionicons name="megaphone-outline" size={22} color={BRAND} /><View><Text style={{ color: c.text, fontWeight: '700' }}>{item.name}</Text><Text style={{ color: c.muted, fontSize: 12 }}>{item.memberCount || 1} members</Text></View></View>
+                    <TouchableOpacity onPress={async () => { if (!isMem) await joinChannelIdempotent(item, myUid); setActiveCh(item); }} style={{ backgroundColor: isMem ? c.input : BRAND, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10 }}><Text style={{ color: isMem ? c.text : BRAND_TEXT, fontWeight: '800', fontSize: 12 }}>{isMem ? 'Open' : 'Join'}</Text></TouchableOpacity>
+                  </TouchableOpacity>
+                );
+              }}
+            />
           ) : activeTab === 'accounts' ? (
-            <FlatList
-              data={matchedAccounts}
-              keyExtractor={(u) => u.id}
-              ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No accounts found for "{submittedQuery}".</Text>}
-              renderItem={({ item }) => (
-                <AccountRow user={item} me={me} myUid={myUid} onPressProfile={() => router.navigate(`/user/${item.id}` as any)} onToggleFollow={() => toggleFollowUser(item, me, myUid)} />
-              )}
-            />
+            <FlatList data={matchedAccounts} keyExtractor={(u) => u.id} ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No accounts found.</Text>} renderItem={({ item }) => <AccountRow user={item} me={me} myUid={myUid} onPressProfile={() => router.navigate(`/user/${item.id}` as any)} onToggleFollow={() => toggleFollowUser(item, me, myUid)} />} />
           ) : activeTab === 'posts' ? (
-            <FlatList
-              data={matchedPosts}
-              numColumns={3}
-              keyExtractor={(i) => i.id}
-              ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No posts found for "{submittedQuery}".</Text>}
-              renderItem={({ item }) => <ExploreTile item={item} onPress={() => setSelectedPost(item)} />}
-            />
+            <FlatList data={matchedPosts} numColumns={3} keyExtractor={(i) => i.id} ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No posts found.</Text>} renderItem={({ item }) => <ExploreTile item={item} onPress={() => setSelectedPost(item)} />} />
           ) : activeTab === 'reels' ? (
-            <FlatList
-              data={matchedReels}
-              numColumns={3}
-              keyExtractor={(i) => i.id}
-              ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No reels found for "{submittedQuery}".</Text>}
-              renderItem={({ item }) => <ExploreTile item={item} tall onPress={() => setSelectedPost(item)} />}
-            />
+            <FlatList data={matchedReels} numColumns={3} keyExtractor={(i) => i.id} ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No reels found.</Text>} renderItem={({ item }) => <ExploreTile item={item} tall onPress={() => setSelectedPost(item)} />} />
           ) : activeTab === 'tags' ? (
-            <FlatList
-              data={matchedTags}
-              keyExtractor={(i) => i.tag}
-              ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No hashtags found for "{submittedQuery}".</Text>}
-              renderItem={({ item }) => (
-                <TouchableOpacity style={styles.sugRow} onPress={() => openHashtagView(item.tag)}>
-                  <View style={styles.sugLeft}>
-                    <View style={[styles.hashIcon, { borderColor: c.border }]}><Text style={{ color: c.text, fontWeight: '800' }}>#</Text></View>
-                    <View>
-                      <Text style={{ color: c.text, fontWeight: '700', fontSize: 14 }}>{item.tag}</Text>
-                      <Text style={{ color: c.muted, fontSize: 12 }}>{item.count} posts</Text>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              )}
-            />
+            <FlatList data={matchedTags} keyExtractor={(i) => i.tag} renderItem={({ item }) => <TouchableOpacity style={styles.sugRow} onPress={() => openHashtagView(item.tag)}><View style={styles.sugLeft}><View style={[styles.hashIcon, { borderColor: c.border }]}><Text style={{ color: c.text, fontWeight: '800' }}>#</Text></View><View><Text style={{ color: c.text, fontWeight: '700' }}>{item.tag}</Text><Text style={{ color: c.muted, fontSize: 12 }}>{item.count} posts</Text></View></View></TouchableOpacity>} />
           ) : activeTab === 'places' ? (
-            <FlatList
-              data={matchedPlaces}
-              keyExtractor={(i) => i.place}
-              ListEmptyComponent={<Text style={[styles.emptyTxt, { color: c.muted }]}>No places found for "{submittedQuery}".</Text>}
-              renderItem={({ item }) => (
-                <TouchableOpacity style={styles.sugRow} onPress={() => openPlaceView(item.place)}>
-                  <View style={styles.sugLeft}>
-                    <Ionicons name="location-outline" size={22} color={BRAND} />
-                    <View>
-                      <Text style={{ color: c.text, fontWeight: '700', fontSize: 14 }}>{item.place}</Text>
-                      <Text style={{ color: c.muted, fontSize: 12 }}>{item.count} posts</Text>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              )}
-            />
+            <FlatList data={matchedPlaces} keyExtractor={(i) => i.place} renderItem={({ item }) => <TouchableOpacity style={styles.sugRow} onPress={() => openPlaceView(item.place)}><View style={styles.sugLeft}><Ionicons name="location-outline" size={22} color={BRAND} /><View><Text style={{ color: c.text, fontWeight: '700' }}>{item.place}</Text><Text style={{ color: c.muted, fontSize: 12 }}>{item.count} posts</Text></View></View></TouchableOpacity>} />
           ) : (
-            <FlatList
-              data={matchedPosts}
-              numColumns={3}
-              keyExtractor={(i) => i.id}
-              ListHeaderComponent={
-                <View>
-                  {matchedAccounts.slice(0, 4).map((u) => (
-                    <AccountRow key={u.id} user={u} me={me} myUid={myUid} onPressProfile={() => router.navigate(`/user/${u.id}` as any)} onToggleFollow={() => toggleFollowUser(u, me, myUid)} />
-                  ))}
-                  {matchedTags.slice(0, 2).map((t) => (
-                    <TouchableOpacity key={t.tag} style={styles.sugRow} onPress={() => openHashtagView(t.tag)}>
-                      <View style={styles.sugLeft}>
-                        <View style={[styles.hashIcon, { borderColor: c.border }]}><Text style={{ color: c.text, fontWeight: '800' }}>#</Text></View>
-                        <Text style={{ color: c.text, fontWeight: '700' }}>{t.tag} ({t.count})</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              }
-              ListEmptyComponent={matchedAccounts.length === 0 && matchedTags.length === 0 ? <Text style={[styles.emptyTxt, { color: c.muted }]}>No results found for "{submittedQuery}".</Text> : null}
-              renderItem={({ item }) => <ExploreTile item={item} onPress={() => setSelectedPost(item)} />}
-            />
+            <FlatList data={matchedPosts} numColumns={3} keyExtractor={(i) => i.id} ListHeaderComponent={<View>{matchedAccounts.slice(0, 4).map((u) => <AccountRow key={u.id} user={u} me={me} myUid={myUid} onPressProfile={() => router.navigate(`/user/${u.id}` as any)} onToggleFollow={() => toggleFollowUser(u, me, myUid)} />)}</View>} renderItem={({ item }) => <ExploreTile item={item} onPress={() => setSelectedPost(item)} />} />
           )}
         </View>
-      ) : exploreLoading ? (
-        <ExploreSkeleton />
-      ) : exploreError ? (
-        <View style={styles.center}>
-          <Text style={{ color: c.muted, marginBottom: 10 }}>{exploreError}</Text>
-          <TouchableOpacity onPress={loadInitialExplore} style={[styles.retryBtn, { backgroundColor: BRAND }]}>
-            <Text style={{ color: '#fff', fontWeight: '700' }}>Retry</Text>
-          </TouchableOpacity>
-        </View>
+      ) : exploreLoading ? <ExploreSkeleton /> : exploreError ? (
+        <View style={styles.center}><Text style={{ color: c.muted, marginBottom: 10 }}>{exploreError}</Text><TouchableOpacity onPress={loadInitialExplore} style={[styles.retryBtn, { backgroundColor: BRAND }]}><Text style={{ color: BRAND_TEXT, fontWeight: '700' }}>Retry</Text></TouchableOpacity></View>
       ) : (
         <FlatList
-          data={authorizedExplorePosts}
-          numColumns={3}
-          keyExtractor={(i) => i.id}
-          onEndReached={loadMoreExplore}
-          onEndReachedThreshold={0.4}
+          data={authorizedExplorePosts} numColumns={3} keyExtractor={(i) => i.id} onEndReached={loadMoreExplore} onEndReachedThreshold={0.4}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadInitialExplore(); }} tintColor={BRAND} />}
           ListHeaderComponent={
             <View style={{ paddingBottom: 8 }}>
-              {trendingTags.length > 0 && (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingVertical: 8 }}>
-                  {trendingTags.map((t) => (
-                    <TouchableOpacity key={t.tag} onPress={() => openHashtagView(t.tag)} style={[styles.chip, { backgroundColor: c.input, borderColor: c.border }]}>
-                      <Text style={{ color: c.text, fontWeight: '700', fontSize: 12 }}>{t.tag}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingVertical: 8 }}>
+                <TouchableOpacity onPress={() => setHubOpen(true)} style={[styles.chip, { backgroundColor: BRAND, borderColor: BRAND, flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
+                  <Ionicons name="megaphone-outline" size={14} color={BRAND_TEXT} />
+                  <Text style={{ color: BRAND_TEXT, fontWeight: '800', fontSize: 12 }}>Channels</Text>
+                </TouchableOpacity>
+                {trendingTags.map((t) => <TouchableOpacity key={t.tag} onPress={() => openHashtagView(t.tag)} style={[styles.chip, { backgroundColor: c.input, borderColor: c.border }]}><Text style={{ color: c.text, fontWeight: '700', fontSize: 12 }}>{t.tag}</Text></TouchableOpacity>)}
+              </ScrollView>
               {suggestedCreators.length > 0 && (
                 <View style={{ marginBottom: 6 }}>
                   <Text style={[styles.subTitle, { color: c.muted }]}>Suggested for you</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 10 }}>
                     {suggestedCreators.map((u) => (
                       <TouchableOpacity key={u.id} style={[styles.creatorCard, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => router.navigate(`/user/${u.id}` as any)}>
-                        {u.avatar ? <Image source={{ uri: u.avatar }} style={styles.creatorAv} /> : (
-                          <View style={[styles.creatorAv, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
-                            <Text style={{ color: '#fff', fontWeight: '700' }}>{(u.username || 'U')[0].toUpperCase()}</Text>
-                          </View>
-                        )}
+                        {u.avatar ? <Image source={{ uri: u.avatar }} style={styles.creatorAv} /> : <View style={[styles.creatorAv, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Text style={{ color: BRAND_TEXT, fontWeight: '700' }}>{(u.username || 'U')[0].toUpperCase()}</Text></View>}
                         <Text style={{ color: c.text, fontWeight: '700', fontSize: 12 }} numberOfLines={1}>@{u.username}</Text>
                       </TouchableOpacity>
                     ))}
@@ -545,14 +331,9 @@ export default function ExploreScreen() {
         />
       )}
 
-      <ExplorePostModal
-        post={selectedPost}
-        author={selectedPost ? userCache[selectedPost.uid] : null}
-        me={me}
-        onClose={() => setSelectedPost(null)}
-        onPressTag={openHashtagView}
-        onPressPlace={openPlaceView}
-      />
+      <ExplorePostModal post={selectedPost} author={selectedPost ? userCache[selectedPost.uid] : null} me={me} onClose={() => setSelectedPost(null)} onPressTag={openHashtagView} onPressPlace={openPlaceView} />
+      <BroadcastRoomModal visible={!!activeCh} channel={activeCh} myUid={myUid} me={me} onClose={() => setActiveCh(null)} />
+      <BroadcastChannelsHub visible={hubOpen} myUid={myUid} me={me} onClose={() => setHubOpen(false)} />
     </View>
   );
 }
@@ -578,4 +359,3 @@ const styles = StyleSheet.create({
   retryBtn: { paddingHorizontal: 18, paddingVertical: 9, borderRadius: 8 },
   emptyTxt: { textAlign: 'center', marginTop: 40, fontSize: 14 },
 });
-                                                   
