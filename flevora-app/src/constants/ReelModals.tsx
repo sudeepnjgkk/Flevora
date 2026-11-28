@@ -75,11 +75,12 @@ export function RepostThoughtModal({ visible, avatar, initialText, onSave, onDel
     </Modal>
   );
 }
+
 export function ReelOptionsSheet({
-  visible, onClose, fullscreen, onToggleFullscreen, paused, onTogglePause, muted, onToggleMute,
+  visible, onClose, isOwner, isArchived, fullscreen, onToggleFullscreen, paused, onTogglePause, muted, onToggleMute,
   speed, onChangeSpeed, autoScroll, onToggleAutoScroll, captions, onToggleCaptions,
   isInterested, onOpenAbout, onOpenAskAI, onOpenAudio, onOpenRemix, onOpenWhy,
-  onInterested, onNotInterested, onReport,
+  onInterested, onNotInterested, onHideCreator, onCopyLink, onEditReel, onInsights, onArchive, onDelete, onReport,
 }: any) {
   const { c } = useTheme();
   const [playOpen, setPlayOpen] = useState(false);
@@ -98,10 +99,20 @@ export function ReelOptionsSheet({
         <TouchableOpacity activeOpacity={1} style={[s.menuSheet, { backgroundColor: c.card }]}>
           <View style={s.handle} />
           <ScrollView showsVerticalScrollIndicator={false}>
+            {isOwner && (
+              <>
+                <MenuRow icon="create-outline" label="Edit Caption & Privacy" onPress={() => { onClose(); onEditReel?.(); }} />
+                <MenuRow icon="stats-chart-outline" label="View Insights" onPress={() => { onClose(); onInsights?.(); }} />
+                <MenuRow icon="archive-outline" label={isArchived ? 'Restore from Archive' : 'Archive Reel'} onPress={() => { onClose(); onArchive?.(); }} />
+                <MenuRow icon="trash-outline" label="Delete Reel" danger onPress={() => { onClose(); onDelete?.(); }} />
+              </>
+            )}
+
             <MenuRow icon="information-circle-outline" label="About this Reel" onPress={() => { onClose(); onOpenAbout(); }} />
             <MenuRow icon="sparkles-outline" label="Ask Flevora AI" onPress={() => { onClose(); onOpenAskAI(); }} />
             <MenuRow icon="musical-notes-outline" label="Audio" onPress={() => { onClose(); onOpenAudio(); }} />
             <MenuRow icon="git-branch-outline" label="Remix and Sequence" onPress={() => { onClose(); onOpenRemix(); }} />
+            <MenuRow icon="link-outline" label="Copy / Share Reel Link" onPress={() => { onClose(); onCopyLink?.(); }} />
 
             <TouchableOpacity style={[s.optRow, { borderBottomColor: c.border }]} onPress={() => setPlayOpen((v) => !v)}>
               <Ionicons name="speedometer-outline" size={22} color={c.text} />
@@ -146,10 +157,15 @@ export function ReelOptionsSheet({
               </View>
             )}
 
-            <MenuRow icon="help-circle-outline" label="Why you're seeing this post" onPress={() => { onClose(); onOpenWhy(); }} />
-            <MenuRow icon={isInterested ? 'checkmark-circle' : 'checkmark-circle-outline'} label={isInterested ? 'Interested (Saved)' : 'Interested'} active={isInterested} onPress={() => { onClose(); onInterested(); }} />
-            <MenuRow icon="close-circle-outline" label="Not Interested" onPress={() => { onClose(); onNotInterested(); }} />
-            <MenuRow icon="flag-outline" label="Report" danger onPress={() => { onClose(); onReport(); }} />
+            {!isOwner && (
+              <>
+                <MenuRow icon="help-circle-outline" label="Why you're seeing this post" onPress={() => { onClose(); onOpenWhy(); }} />
+                <MenuRow icon={isInterested ? 'checkmark-circle' : 'checkmark-circle-outline'} label={isInterested ? 'Interested (Saved)' : 'Interested'} active={isInterested} onPress={() => { onClose(); onInterested(); }} />
+                <MenuRow icon="close-circle-outline" label="Not Interested" onPress={() => { onClose(); onNotInterested(); }} />
+                <MenuRow icon="eye-off-outline" label="Hide content from this creator" onPress={() => { onClose(); onHideCreator?.(); }} />
+                <MenuRow icon="flag-outline" label="Report" danger onPress={() => { onClose(); onReport(); }} />
+              </>
+            )}
           </ScrollView>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -160,7 +176,7 @@ export function ReelOptionsSheet({
 const s = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.48)', justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '65%', padding: 16 },
-  menuSheet: { borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '78%', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 },
+  menuSheet: { borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '80%', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: '#888', alignSelf: 'center', marginBottom: 8 },
   title: { fontSize: 16, fontWeight: '800', textAlign: 'center', marginBottom: 12 },
   playRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 12, marginBottom: 8, borderBottomWidth: 1 },
