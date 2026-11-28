@@ -4,13 +4,13 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { collection, query, where, orderBy, limit, onSnapshot, doc, addDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, onSnapshot, doc, addDoc, setDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../config';
 import { useTheme, BRAND, BRAND_TEXT } from '../constants/theme';
 import { useLang } from '../constants/i18n';
 import { dmT, formatMsgTime } from '../constants/dmCapabilities';
 import { AccountSwitcherModal, SelectMoreModal, NewChatModal } from '../constants/DmModals';
-import { NoteModal, canSeeNote } from '../constants/NoteModal';
+import { NoteModal, NoteDetailModal, canSeeNote } from '../constants/NoteModal';
 import { DmChatRoom } from '../constants/DmChatRoom';
 import { DmRequestsView } from '../constants/DmRequestsView';
 
@@ -24,6 +24,7 @@ export default function MessagesScreen() {
   const [me, setMe] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [convos, setConvos] = useState<any[]>([]);
+  const [notesMap, setNotesMap] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [search, setSearch] = useState('');
@@ -37,6 +38,7 @@ export default function MessagesScreen() {
   const [msgLimit, setMsgLimit] = useState(40);
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
+  const [detailNote, setDetailNote] = useState<{ note: any; owner: any } | null>(null);
   const [modals, setModals] = useState({ acc: false, more: false, newChat: false, note: false });
 
   useEffect(() => {
@@ -56,7 +58,12 @@ export default function MessagesScreen() {
       setConvos(s.docs.map((d) => ({ id: d.id, ...d.data() })));
       setLoading(false);
     }, () => setLoading(false));
-    return () => { u1(); u2(); u3(); };
+    const u4 = onSnapshot(collection(db, 'notes'), (s) => {
+      const m: Record<string, any> = {};
+      s.docs.forEach((d) => { m[d.id] = { id: d.id, ...d.data() }; });
+      setNotesMap(m);
+    }, () => {});
+    return () => { u1(); u2(); u3(); u4(); };
   }, [myUid]);
 
   useEffect(() => {
@@ -113,6 +120,24 @@ export default function MessagesScreen() {
     setActiveChat({ chatId: ref.id, targetUid: '', targetName: groupName, convo: { id: ref.id, type: 'group', groupName, groupDesc, participants: [myUid, ...memberIds], admins: [myUid] } });
   };
 
+  const replyToNoteInDm = async (targetUid: string, uname: string, replyText: string, noteObj?: any) => {
+    if (!myUid || !targetUid || !replyText.trim()) return;
+    const cid = [myUid, targetUid].sort().join('_');
+    await setDoc(doc(db, 'conversations', cid), { participants: [myUid, targetUid], updatedAt: serverTimestamp(), lastMessage: `Note reply: ${replyText}`, lastSenderUid: myUid }, { merge: true });
+    await addDoc(collection(db, 'conversations', cid, 'messages'), {
+      senderUid: myUid, senderName: me?.username || 'user', text: `Note reply (${noteObj?.text || 'Note'}): ${replyText}`,
+      mediaType: 'text', noteId: noteObj?.id || targetUid, read: false, createdAt: serverTimestamp(),
+    });
+    if (targetUid !== myUid) {
+      await addDoc(collection(db, 'notifications'), {
+        toUid: targetUid, fromUid: myUid, fromUsername: me?.username || 'user',
+        type: 'note_reply', noteId: noteObj?.id || targetUid, message: `replied to your note: ${replyText}`,
+        read: false, createdAt: serverTimestamp(),
+      }).catch(() => {});
+    }
+    setActiveChat({ chatId: cid, targetUid, targetName: uname });
+  };
+
   if (activeChat) {
     const liveConvo = convos.find((cv) => cv.id === activeChat.chatId) || activeChat.convo;
     return (
@@ -142,8 +167,9 @@ export default function MessagesScreen() {
   }
 
   const myDp = me?.photoUrl || me?.avatar || '';
-  const myNoteActive = me?.note && (!me.note.expiresAt || me.note.expiresAt > Date.now());
-  const noteUsers = users.filter((u) => canSeeNote(u.note, myUid, u.id, me) || (following.includes(u.id) && isOnline(u)));
+  const myNote = notesMap[myUid] || me?.note;
+  const myNoteActive = canSeeNote(myNote, myUid, myUid, me, me);
+  const noteUsers = users.filter((u) => canSeeNote(notesMap[u.id] || u.note, myUid, u.id, me, u) || (following.includes(u.id) && isOnline(u)));
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
@@ -158,18 +184,24 @@ export default function MessagesScreen() {
       <View style={[s.sBox, { backgroundColor: c.input }]}><Ionicons name="search" size={17} color={c.muted} /><TextInput value={search} onChangeText={setSearch} placeholder={L.searchPlaceholder} placeholderTextColor={c.muted} style={{ flex: 1, color: c.text }} /></View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.notesRow} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
-        <TouchableOpacity style={s.noteItem} onPress={() => setModals((m) => ({ ...m, note: true }))}>
-          <View style={[s.noteBubble, { backgroundColor: c.card, borderColor: c.border }]}><Text style={{ color: myNoteActive ? c.text : c.muted, fontSize: 10, fontWeight: '700' }} numberOfLines={1}>{myNoteActive ? (me.note.text || 'Note') : 'Note...'}</Text></View>
+        <TouchableOpacity style={s.noteItem} onPress={() => (myNoteActive ? setDetailNote({ note: myNote, owner: me }) : setModals((m) => ({ ...m, note: true })))} onLongPress={() => setModals((m) => ({ ...m, note: true }))}>
+          <View style={[s.noteBubble, { backgroundColor: c.card, borderColor: myNoteActive && myNote?.audience === 'closeFriends' ? '#10B981' : c.border }]}>
+            <Text style={{ color: myNoteActive ? c.text : c.muted, fontSize: 10, fontWeight: '700' }} numberOfLines={1}>{myNoteActive ? (myNote.promptQuestion || myNote.text || (myNote.videoUrl ? '🎥 Video' : 'Note')) : 'Note...'}</Text>
+          </View>
           {myDp ? <Image source={{ uri: myDp }} style={s.noteAv} /> : <View style={[s.noteAv, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={26} color={BRAND_TEXT} /></View>}
           <Text style={{ color: c.muted, fontSize: 11, marginTop: 4 }}>Your note</Text>
         </TouchableOpacity>
-        {noteUsers.map((u) => (
-          <TouchableOpacity key={u.id} style={s.noteItem} onPress={() => setActiveChat({ chatId: [myUid, u.id].sort().join('_'), targetUid: u.id, targetName: u.username })}>
-            {canSeeNote(u.note, myUid, u.id, me) ? <View style={[s.noteBubble, { backgroundColor: c.card, borderColor: c.border }]}><Text style={{ color: c.text, fontSize: 10 }} numberOfLines={1}>{u.note.text || '♪'}</Text></View> : <View style={{ height: 22 }} />}
-            <View>{u.photoUrl || u.avatar ? <Image source={{ uri: u.photoUrl || u.avatar }} style={s.noteAv} /> : <View style={[s.noteAv, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={26} color={BRAND_TEXT} /></View>}{isOnline(u) && <View style={[s.onlineDot, { borderColor: c.background }]} />}</View>
-            <Text style={{ color: c.text, fontSize: 11, marginTop: 4 }} numberOfLines={1}>{u.username}</Text>
-          </TouchableOpacity>
-        ))}
+        {noteUsers.map((u) => {
+          const uNote = notesMap[u.id] || u.note;
+          const visible = canSeeNote(uNote, myUid, u.id, me, u);
+          return (
+            <TouchableOpacity key={u.id} style={s.noteItem} onPress={() => (visible ? setDetailNote({ note: uNote, owner: u }) : setActiveChat({ chatId: [myUid, u.id].sort().join('_'), targetUid: u.id, targetName: u.username }))}>
+              {visible ? <View style={[s.noteBubble, { backgroundColor: c.card, borderColor: uNote?.audience === 'closeFriends' ? '#10B981' : c.border }]}><Text style={{ color: c.text, fontSize: 10 }} numberOfLines={1}>{uNote.promptQuestion || uNote.text || (uNote.videoUrl ? '🎥' : 'Note')}</Text></View> : <View style={{ height: 22 }} />}
+              <View>{u.photoUrl || u.avatar ? <Image source={{ uri: u.photoUrl || u.avatar }} style={s.noteAv} /> : <View style={[s.noteAv, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={26} color={BRAND_TEXT} /></View>}{isOnline(u) && <View style={[s.onlineDot, { borderColor: c.background }]} />}</View>
+              <Text style={{ color: c.text, fontSize: 11, marginTop: 4 }} numberOfLines={1}>{u.username}</Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
 
       <View style={s.tabs}>
@@ -227,7 +259,8 @@ export default function MessagesScreen() {
       <AccountSwitcherModal visible={modals.acc} accounts={accounts} currentUid={myUid} c={c} onClose={() => setModals((m) => ({ ...m, acc: false }))} onAdd={() => signOut(auth)} />
       <SelectMoreModal visible={modals.more} c={c} onClose={() => setModals((m) => ({ ...m, more: false }))} onAction={handleMore} />
       <NewChatModal visible={modals.newChat} users={users} c={c} onClose={() => setModals((m) => ({ ...m, newChat: false }))} onPick={(u: any) => { setActiveChat({ chatId: [myUid, u.id].sort().join('_'), targetUid: u.id, targetName: u.username }); setModals((m) => ({ ...m, newChat: false })); }} onCreateGroup={createGroup} />
-      <NoteModal visible={modals.note} me={me} users={users} onClose={() => setModals((m) => ({ ...m, note: false }))} />
+      <NoteModal visible={modals.note} me={me} users={users} activeNote={myNoteActive ? myNote : null} onClose={() => setModals((m) => ({ ...m, note: false }))} />
+      <NoteDetailModal visible={!!detailNote} note={detailNote?.note} owner={detailNote?.owner} me={me} myUid={myUid} allUsers={users} onReplyDm={replyToNoteInDm} onEditOwn={() => setModals((m) => ({ ...m, note: true }))} onClose={() => setDetailNote(null)} />
     </View>
   );
 }
@@ -245,4 +278,3 @@ const s = StyleSheet.create({
   chatRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10 },
   chatAv: { width: 48, height: 48, borderRadius: 24 },
 });
-                                
