@@ -286,4 +286,4 @@ const s = StyleSheet.create({
   cSheet: { backgroundColor: '#fff', height: '55%', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16 },
   cInp: { flex: 1, backgroundColor: '#F3F4F6', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
 });
-          
+  
