@@ -6,20 +6,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { AudioModule, RecordingPresets, useAudioPlayer, useAudioRecorder
-
-Bilkul! Ye raha `src/constants/ReelsStudioModal.tsx` **3 chhote parts** me — teeno ko order me paste kar do:
-
-#### `src/constants/ReelsStudioModal.tsx` — **Part 1 of 3**
-```tsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  View, Text, Modal, TouchableOpacity, TextInput, ScrollView, Image,
-  StyleSheet, Alert, ActivityIndicator, Switch, FlatList,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import { VideoView, useVideoPlayer } from 'expo-video';
 import { AudioModule, RecordingPresets, useAudioPlayer, useAudioRecorder } from 'expo-audio';
 import { useTheme, BRAND, BRAND_TEXT } from './theme';
 import {
