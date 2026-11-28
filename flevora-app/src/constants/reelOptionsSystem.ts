@@ -37,13 +37,14 @@ export function canViewReel(reel: any, owner: any, me: any, myUid: string): bool
 }
 
 export function getAudioMeta(reel: any, owner: any) {
-  if (!reel) return { id: '', title: 'Audio Unavailable', artist: '', coverUrl: '', isOriginal: false, restricted: false, available: false };
-  if (reel.audioUnavailable) return { id: '', title: 'Audio Unavailable', artist: '', coverUrl: '', isOriginal: false, restricted: false, available: false };
+  if (!reel || reel.audioUnavailable) {
+    return { id: '', title: 'Audio Unavailable', artist: '', coverUrl: '', isOriginal: false, restricted: false, available: false };
+  }
   const username = owner?.username || reel.username || 'user';
   const isOriginal = !reel.audioName;
   return {
     id: reel.audioId || `orig_${reel.uid}`,
-    title: reel.audioName || `Original Audio`,
+    title: reel.audioName || 'Original Audio',
     artist: reel.audioArtist || `@${username}`,
     coverUrl: reel.audioCover || owner?.photoUrl || owner?.avatar || reel.avatar || '',
     isOriginal,
@@ -55,12 +56,12 @@ export function getAudioMeta(reel: any, owner: any) {
 export async function fetchReelsWithSameAudio(reel: any, owner: any, me: any, myUid: string, usersMap: Record<string, any>) {
   if (!reel) return [];
   const q = reel.audioId
-    ? query(collection(db, 'posts'), where('mediaType', '==', 'video'), where('audioId', '==', reel.audioId), limit(24))
-    : query(collection(db, 'posts'), where('mediaType', '==', 'video'), where('uid', '==', reel.uid), orderBy('createdAt', 'desc'), limit(24));
+    ? query(collection(db, 'posts'), where('audioId', '==', reel.audioId), limit(24))
+    : query(collection(db, 'posts'), where('uid', '==', reel.uid), orderBy('createdAt', 'desc'), limit(24));
   const snap = await getDocs(q);
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((r: any) => canViewReel(r, usersMap[r.uid] || owner, me, myUid));
+    .filter((r: any) => r.mediaType === 'video' && canViewReel(r, usersMap[r.uid] || owner, me, myUid));
 }
 
 export function getWhySeeingReasons(reel: any, owner: any, me: any, feedTab: 'forYou' | 'following'): string[] {
