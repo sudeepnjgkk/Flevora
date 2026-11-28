@@ -232,7 +232,7 @@ export function ExplorePostModal({ post, author, me, onClose, onPressTag, onPres
           </ScrollView>
         )}
 
-        <CommentModal postId={commentPostId} onClose={() => setCommentPostId(null)} />
+      <CommentModal postId={commentPostId} post={p} onClose={() => setCommentPostId(null)} />
         <ShareModal post={sharePost} onClose={() => setSharePost(null)} />
       </View>
     </Modal>
