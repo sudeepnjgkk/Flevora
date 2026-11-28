@@ -11,10 +11,12 @@ import { LikesPlaysModal, RepostThoughtModal, ReelOptionsSheet } from '../consta
 import { BRAND, NEON } from '../constants/theme';
 import { AnimatedLikeButton } from '../constants/LikeComponents';
 import { formatLikeCount, togglePostLike } from '../constants/likeSystem';
+import { SaveButton, SaveCollectionSheet } from '../constants/SaveModals';
+import { toggleSavePost } from '../constants/saveSystem';
 
 const H = Dimensions.get('window').height - 56;
 
-function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoScroll, onNextReel, onComment, onShare, onLikes, onRepostToast }: any) {
+function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoScroll, onNextReel, onComment, onShare, onLikes, onRepostToast, onSaveSheet }: any) {
   const router = useRouter();
   const uid = auth.currentUser?.uid || '';
   const [paused, setPaused] = useState(false);
@@ -22,6 +24,7 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
   const [likeCount, setLikeCount] = useState(Array.isArray(item.likes) ? item.likes.length : 0);
   const [reposted, setReposted] = useState(Array.isArray(item.reposts) && item.reposts.includes(uid));
   const [repostCount, setRepostCount] = useState(Array.isArray(item.reposts) ? item.reposts.length : 0);
+  const [saved, setSaved] = useState(Array.isArray(me?.savedPosts) && me.savedPosts.includes(item.id));
   const [thoughtOpen, setThoughtOpen] = useState(false);
   const [optOpen, setOptOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -47,6 +50,10 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
     setRepostCount(Array.isArray(item.reposts) ? item.reposts.length : 0);
   }, [item.likes, item.reposts, uid]);
 
+  useEffect(() => {
+    setSaved(Array.isArray(me?.savedPosts) && me.savedPosts.includes(item.id));
+  }, [me?.savedPosts, item.id]);
+
   useEffect(() => { player.loop = !autoScroll; }, [autoScroll]);
   useEffect(() => { player.playbackRate = speed; }, [speed]);
   useEffect(() => {
@@ -60,7 +67,6 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
     else player.pause();
   }, [focused, active, paused]);
 
-  const saved = Array.isArray(me?.savedPosts) && me.savedPosts.includes(item.id);
   const following = Array.isArray(me?.following) && me.following.includes(item.uid);
   const myThought = item.repostThoughts?.[uid] || '';
   const myAv = me?.photoUrl || me?.avatar || '';
@@ -141,7 +147,15 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
 
   const saveThought = async (txt: string) => { setThoughtOpen(false); if (uid) await updateDoc(doc(db, 'posts', item.id), { [`repostThoughts.${uid}`]: txt || deleteField() }).catch(() => {}); };
   const deleteRepost = async () => { setThoughtOpen(false); if (!uid) return; setReposted(false); setRepostCount((c) => Math.max(0, c - 1)); await updateDoc(doc(db, 'posts', item.id), { reposts: arrayRemove(uid), [`repostThoughts.${uid}`]: deleteField() }).catch(() => {}); };
-  const toggleSave = () => uid && updateDoc(doc(db, 'users', uid), { savedPosts: saved ? arrayRemove(item.id) : arrayUnion(item.id) }).catch(() => {});
+  const toggleSave = () => {
+    toggleSavePost({
+      postId: item.id,
+      myUid: uid,
+      me,
+      onOptimistic: (nextSaved) => setSaved(nextSaved),
+      onRollback: (wasSaved) => setSaved(wasSaved),
+    });
+  };
   const toggleFollow = async () => {
     if (!uid || uid === item.uid) return;
     await updateDoc(doc(db, 'users', uid), { following: following ? arrayRemove(item.uid) : arrayUnion(item.uid) }).catch(() => {});
@@ -191,7 +205,7 @@ function ReelItem({ item, active, focused, me, owner, autoScroll, onToggleAutoSc
             </View>
             <TouchableOpacity onPress={onComment} style={s.actBtn} hitSlop={8}><Ionicons name="chatbubble-outline" size={28} color="#fff" /><Text style={s.actTxt}>{item.commentsCount || 0}</Text></TouchableOpacity>
             <TouchableOpacity onPress={toggleRepost} style={s.actBtn} hitSlop={8}><Ionicons name="repeat" size={29} color={reposted ? BRAND : '#fff'} /><Text style={s.actTxt}>{repostCount}</Text></TouchableOpacity>
-            <TouchableOpacity onPress={toggleSave} style={s.actBtn} hitSlop={8}><Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={27} color={saved ? BRAND : '#fff'} /></TouchableOpacity>
+            <View style={s.actBtn}><SaveButton saved={saved} size={27} color="#fff" onPress={toggleSave} onLongPress={onSaveSheet} /></View>
             <TouchableOpacity onPress={onShare} style={s.actBtn} hitSlop={8}><Ionicons name="paper-plane-outline" size={26} color="#fff" /></TouchableOpacity>
             <TouchableOpacity onPress={() => setOptOpen(true)} style={s.actBtn} hitSlop={10}><Ionicons name="ellipsis-vertical" size={23} color="#fff" /></TouchableOpacity>
           </View>
@@ -218,6 +232,7 @@ export default function ReelsScreen() {
   const [commentPost, setCommentPost] = useState<any>(null);
   const [shareReel, setShareReel] = useState<any>(null);
   const [likesPost, setLikesPost] = useState<any>(null);
+  const [saveTarget, setSaveTarget] = useState<any>(null);
   const [toastReelId, setToastReelId] = useState<string | null>(null);
   const timerRef = useRef<any>(null);
 
@@ -258,7 +273,7 @@ export default function ReelsScreen() {
         ))}
       </View>
       <FlatList ref={listRef} data={shownReels} pagingEnabled windowSize={3} maxToRenderPerBatch={2} showsVerticalScrollIndicator={false} keyExtractor={(i) => i.id} onViewableItemsChanged={onView} viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
-        renderItem={({ item }) => <ReelItem item={item} active={item.id === activeId} focused={focused} me={me} owner={usersMap[item.uid]} autoScroll={autoScroll} onToggleAutoScroll={() => setAutoScroll((v) => !v)} onNextReel={() => goNext(item.id)} onComment={() => setCommentPost(item)} onShare={() => setShareReel(item)} onLikes={() => setLikesPost(item)} onRepostToast={showRepostToast} />}
+        renderItem={({ item }) => <ReelItem item={item} active={item.id === activeId} focused={focused} me={me} owner={usersMap[item.uid]} autoScroll={autoScroll} onToggleAutoScroll={() => setAutoScroll((v) => !v)} onNextReel={() => goNext(item.id)} onComment={() => setCommentPost(item)} onShare={() => setShareReel(item)} onLikes={() => setLikesPost(item)} onRepostToast={showRepostToast} onSaveSheet={() => setSaveTarget(item)} />}
         ListEmptyComponent={<View style={s.empty}><Ionicons name="videocam-outline" size={48} color="#666" /><Text style={{ color: '#888', marginTop: 10 }}>No reels yet</Text></View>}
       />
       {!!toastReelId && (
@@ -270,6 +285,7 @@ export default function ReelsScreen() {
       <CommentModal postId={commentPost?.id || null} post={commentPost} onClose={() => setCommentPost(null)} />
       <ShareModal post={shareReel} onClose={() => setShareReel(null)} />
       <LikesPlaysModal post={likesPost} onClose={() => setLikesPost(null)} />
+      <SaveCollectionSheet visible={!!saveTarget} post={saveTarget} myUid={uid} me={me} onClose={() => setSaveTarget(null)} />
     </View>
   );
 }
@@ -296,4 +312,4 @@ const s = StyleSheet.create({
   toast: { position: 'absolute', left: 12, right: 12, bottom: 12, backgroundColor: '#262626', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 50, elevation: 50 },
   empty: { height: H, justifyContent: 'center', alignItems: 'center' },
 });
-                                                               
+                
