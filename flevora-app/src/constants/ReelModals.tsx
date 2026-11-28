@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Modal, TouchableOpacity, TextInput, FlatList, Image, Switch, StyleSheet } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, TextInput, FlatList, Image, Switch, ScrollView, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../config';
-import { useTheme, BRAND } from './theme';
+import { useTheme, BRAND, BRAND_TEXT } from './theme';
 
 const EMOJIS = ['❤️', '😢', '🥹', '😅', '🥰', '💔', '💯'];
 const SPEEDS = [0.5, 1, 1.5, 2];
@@ -37,9 +37,7 @@ export function LikesPlaysModal({ post, onClose }: { post: any | null; onClose: 
             ListEmptyComponent={<Text style={{ color: c.muted, textAlign: 'center', marginTop: 24 }}>No likes yet</Text>}
             renderItem={({ item }) => (
               <TouchableOpacity style={s.userRow} onPress={() => { onClose(); router.push(`/user/${item.id}` as any); }}>
-                
-
-{item.photoUrl || item.avatar ? <Image source={{ uri: item.photoUrl || item.avatar }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={18} color="#fff" /></View>}
+                {item.photoUrl || item.avatar ? <Image source={{ uri: item.photoUrl || item.avatar }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={18} color={BRAND_TEXT} /></View>}
                 <View style={{ flex: 1 }}><Text style={{ color: c.text, fontWeight: '700' }}>@{item.username || 'user'}</Text>{!!item.name && <Text style={{ color: c.muted, fontSize: 12 }}>{item.name}</Text>}</View>
                 <Ionicons name="heart" size={18} color="#EF4444" />
               </TouchableOpacity>
@@ -77,42 +75,82 @@ export function RepostThoughtModal({ visible, avatar, initialText, onSave, onDel
     </Modal>
   );
 }
+export function ReelOptionsSheet({
+  visible, onClose, fullscreen, onToggleFullscreen, paused, onTogglePause, muted, onToggleMute,
+  speed, onChangeSpeed, autoScroll, onToggleAutoScroll, captions, onToggleCaptions,
+  isInterested, onOpenAbout, onOpenAskAI, onOpenAudio, onOpenRemix, onOpenWhy,
+  onInterested, onNotInterested, onReport,
+}: any) {
+  const { c } = useTheme();
+  const [playOpen, setPlayOpen] = useState(false);
 
-export function ReelOptionsSheet({ visible, onClose, fullscreen, onToggleFullscreen, speed, onChangeSpeed, autoScroll, onToggleAutoScroll, captions, onToggleCaptions, onInterest }: any) {
+  const MenuRow = ({ icon, label, danger, active, onPress }: any) => (
+    <TouchableOpacity style={[s.optRow, { borderBottomColor: c.border }]} onPress={onPress}>
+      <Ionicons name={icon} size={22} color={danger ? '#EF4444' : active ? BRAND : c.text} />
+      <Text style={[s.optTxt, { color: danger ? '#EF4444' : c.text, flex: 1 }]}>{label}</Text>
+      <Ionicons name="chevron-forward" size={18} color={c.muted} />
+    </TouchableOpacity>
+  );
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <TouchableOpacity style={s.backdrop} activeOpacity={1} onPress={onClose}>
-        <TouchableOpacity activeOpacity={1} style={s.darkSheet}>
+        <TouchableOpacity activeOpacity={1} style={[s.menuSheet, { backgroundColor: c.card }]}>
           <View style={s.handle} />
-          <TouchableOpacity style={s.optRow} onPress={() => { onToggleFullscreen(); onClose(); }}>
-            <Ionicons name={fullscreen ? 'contract-outline' : 'expand-outline'} size={22} color="#fff" />
-            <Text style={s.optTxt}>{fullscreen ? 'Exit fullscreen' : 'View fullscreen'}</Text>
-          </TouchableOpacity>
-          <View style={s.optRow}>
-            <Ionicons name="speedometer-outline" size={22} color="#fff" />
-            <Text style={[s.optTxt, { flex: 1 }]}>Speed</Text>
-            <View style={{ flexDirection: 'row', gap: 6 }}>
-              {SPEEDS.map((sp) => (
-                <TouchableOpacity key={sp} onPress={() => onChangeSpeed(sp)} style={[s.spPill, speed === sp && { backgroundColor: '#fff' }]}>
-                  <Text style={{ color: speed === sp ? '#000' : '#fff', fontWeight: '700', fontSize: 12 }}>{sp === 0.5 ? '.5x' : `${sp}x`}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-          <View style={s.optRow}>
-            <Ionicons name="swap-vertical-outline" size={22} color="#fff" />
-            <Text style={[s.optTxt, { flex: 1 }]}>Auto scroll</Text>
-            <Switch value={autoScroll} onValueChange={onToggleAutoScroll} />
-          </View>
-          <View style={s.optRow}>
-            <Ionicons name="closed-captioning-outline" size={22} color="#fff" />
-            <Text style={[s.optTxt, { flex: 1 }]}>Closed Captions</Text>
-            <Switch value={captions} onValueChange={onToggleCaptions} />
-          </View>
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-            <TouchableOpacity onPress={() => { onInterest(false); onClose(); }} style={s.intBtn}><Ionicons name="close" size={18} color="#fff" /><Text style={{ color: '#fff', fontWeight: '700' }}>Not interested</Text></TouchableOpacity>
-            <TouchableOpacity onPress={() => { onInterest(true); onClose(); }} style={s.intBtn}><Ionicons name="checkmark" size={18} color="#fff" /><Text style={{ color: '#fff', fontWeight: '700' }}>Interested</Text></TouchableOpacity>
-          </View>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <MenuRow icon="information-circle-outline" label="About this Reel" onPress={() => { onClose(); onOpenAbout(); }} />
+            <MenuRow icon="sparkles-outline" label="Ask Flevora AI" onPress={() => { onClose(); onOpenAskAI(); }} />
+            <MenuRow icon="musical-notes-outline" label="Audio" onPress={() => { onClose(); onOpenAudio(); }} />
+            <MenuRow icon="git-branch-outline" label="Remix and Sequence" onPress={() => { onClose(); onOpenRemix(); }} />
+
+            <TouchableOpacity style={[s.optRow, { borderBottomColor: c.border }]} onPress={() => setPlayOpen((v) => !v)}>
+              <Ionicons name="speedometer-outline" size={22} color={c.text} />
+              <Text style={[s.optTxt, { color: c.text, flex: 1 }]}>Playback ({speed === 0.5 ? '.5x' : `${speed}x`}{muted ? ' • Muted' : ''})</Text>
+              <Ionicons name={playOpen ? 'chevron-up' : 'chevron-down'} size={18} color={c.muted} />
+            </TouchableOpacity>
+
+            {playOpen && (
+              <View style={[s.playPanel, { backgroundColor: c.input, borderColor: c.border }]}>
+                <View style={s.subRow}>
+                  <Text style={{ color: c.text, fontWeight: '600', flex: 1 }}>Speed</Text>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {SPEEDS.map((sp) => (
+                      <TouchableOpacity key={sp} onPress={() => onChangeSpeed(sp)} style={[s.spPill, { backgroundColor: speed === sp ? BRAND : c.card }]}>
+                        <Text style={{ color: speed === sp ? BRAND_TEXT : c.text, fontWeight: '700', fontSize: 12 }}>{sp === 0.5 ? '.5x' : `${sp}x`}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity onPress={onTogglePause} style={[s.miniBtn, { backgroundColor: c.card }]}>
+                    <Ionicons name={paused ? 'play' : 'pause'} size={18} color={c.text} />
+                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>{paused ? 'Resume' : 'Pause'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={onToggleMute} style={[s.miniBtn, { backgroundColor: c.card }]}>
+                    <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={18} color={c.text} />
+                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>{muted ? 'Unmute' : 'Mute'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { onToggleFullscreen(); onClose(); }} style={[s.miniBtn, { backgroundColor: c.card }]}>
+                    <Ionicons name={fullscreen ? 'contract-outline' : 'expand-outline'} size={18} color={c.text} />
+                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>{fullscreen ? 'Exit' : 'Full'}</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={s.subRow}>
+                  <Text style={{ color: c.text, fontWeight: '600', flex: 1 }}>Auto scroll</Text>
+                  <Switch value={autoScroll} onValueChange={onToggleAutoScroll} />
+                </View>
+                <View style={s.subRow}>
+                  <Text style={{ color: c.text, fontWeight: '600', flex: 1 }}>Closed Captions</Text>
+                  <Switch value={captions} onValueChange={onToggleCaptions} />
+                </View>
+              </View>
+            )}
+
+            <MenuRow icon="help-circle-outline" label="Why you're seeing this post" onPress={() => { onClose(); onOpenWhy(); }} />
+            <MenuRow icon={isInterested ? 'checkmark-circle' : 'checkmark-circle-outline'} label={isInterested ? 'Interested (Saved)' : 'Interested'} active={isInterested} onPress={() => { onClose(); onInterested(); }} />
+            <MenuRow icon="close-circle-outline" label="Not Interested" onPress={() => { onClose(); onNotInterested(); }} />
+            <MenuRow icon="flag-outline" label="Report" danger onPress={() => { onClose(); onReport(); }} />
+          </ScrollView>
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>
@@ -122,16 +160,18 @@ export function ReelOptionsSheet({ visible, onClose, fullscreen, onToggleFullscr
 const s = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.48)', justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '65%', padding: 16 },
-  darkSheet: { backgroundColor: '#1E1E1E', borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 16, paddingBottom: 28, gap: 12 },
+  menuSheet: { borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '78%', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: '#888', alignSelf: 'center', marginBottom: 8 },
   title: { fontSize: 16, fontWeight: '800', textAlign: 'center', marginBottom: 12 },
   playRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 12, marginBottom: 8, borderBottomWidth: 1 },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
   av: { width: 40, height: 40, borderRadius: 20 },
-  optRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6 },
-  optTxt: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  spPill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.14)' },
-  intBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#2C2C2E', paddingVertical: 11, borderRadius: 12 },
+  optRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 0.5 },
+  optTxt: { fontSize: 15, fontWeight: '600' },
+  playPanel: { borderWidth: 1, borderRadius: 12, padding: 12, marginVertical: 8, gap: 10 },
+  subRow: { flexDirection: 'row', alignItems: 'center' },
+  spPill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14 },
+  miniBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 10 },
   thoughtBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.82)', justifyContent: 'space-between', paddingTop: 120, paddingBottom: 24, paddingHorizontal: 18 },
   thoughtWrap: { alignItems: 'center' },
   bubbleBox: { backgroundColor: '#fff', borderRadius: 22, paddingHorizontal: 18, paddingVertical: 10, minWidth: 150, maxWidth: '85%' },
@@ -142,4 +182,3 @@ const s = StyleSheet.create({
   emojiRow: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingVertical: 6 },
   saveBtn: { backgroundColor: '#fff', borderRadius: 24, paddingVertical: 12, alignItems: 'center' },
 });
-           
