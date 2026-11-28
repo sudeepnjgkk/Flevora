@@ -14,6 +14,7 @@ import { fetchPostsByIds, fetchTaggedPostsPage, fetchUserPostsPage } from '../co
 import { fetchUserRepostsPage } from '../constants/repostSystem';
 import { EditProfileModal, FollowListModal, HighlightModal, ProfessionalModal, shareProfileLink } from '../constants/ProfileSubModals';
 import { ProfileSettingsModal } from '../constants/ProfileSettingsModal';
+import { SavedLibraryView } from '../constants/SaveModals';
 import UploadScreen from './upload';
 
 const W = (Dimensions.get('window').width - 4) / 3;
@@ -39,6 +40,7 @@ export default function ProfileScreen() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [proOpen, setProOpen] = useState(false);
+  const [colsOpen, setColsOpen] = useState(false);
   const [followMode, setFollowMode] = useState<'followers' | 'following' | 'requests' | null>(null);
   const [hlModal, setHlModal] = useState<{ open: boolean; item: any | null }>({ open: false, item: null });
   const [selectedPost, setSelectedPost] = useState<any | null>(null);
@@ -201,6 +203,14 @@ export default function ProfileScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+
+            {tab === 'saved' && (
+              <TouchableOpacity onPress={() => setColsOpen(true)} style={[styles.colBar, { backgroundColor: c.input }]}>
+                <Ionicons name="folder-open-outline" size={18} color={c.text} />
+                <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>Open Saved Library & Collections</Text>
+                <Ionicons name="chevron-forward" size={16} color={c.muted} />
+              </TouchableOpacity>
+            )}
           </View>
         }
         ListEmptyComponent={loading ? <ActivityIndicator style={{ marginTop: 30 }} color={BRAND} /> : <Text style={{ color: c.muted, textAlign: 'center', marginTop: 40 }}>Nothing here yet.</Text>}
@@ -218,6 +228,16 @@ export default function ProfileScreen() {
       <ProfessionalModal visible={proOpen} uid={uid} user={user} posts={myPosts} onClose={() => setProOpen(false)} />
       <ProfileSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} onOpenEdit={() => setEditOpen(true)} onOpenRequests={() => setFollowMode('requests')} />
       <ExplorePostModal post={selectedPost} author={user} me={user} onClose={() => setSelectedPost(null)} onPressTag={(t) => router.navigate({ pathname: '/explore', params: { q: t } } as any)} onPressPlace={(p) => router.navigate({ pathname: '/explore', params: { q: p } } as any)} />
+      <Modal visible={colsOpen} animationType="slide" onRequestClose={() => setColsOpen(false)}>
+        <View style={[styles.container, { backgroundColor: c.background }]}>
+          <View style={[styles.topBar, { borderBottomWidth: 0.5, borderBottomColor: c.border }]}>
+            <TouchableOpacity onPress={() => setColsOpen(false)}><Ionicons name="arrow-back" size={24} color={c.text} /></TouchableOpacity>
+            <Text style={{ color: c.text, fontWeight: '800', fontSize: 17 }}>Saved & Collections</Text>
+            <View style={{ width: 24 }} />
+          </View>
+          <SavedLibraryView user={user} myUid={uid} />
+        </View>
+      </Modal>
       <Modal visible={createOpen} animationType="slide" onRequestClose={() => setCreateOpen(false)}>
         <View style={{ flex: 1 }}>
           <TouchableOpacity onPress={() => setCreateOpen(false)} style={{ position: 'absolute', top: 46, right: 16, zIndex: 50, padding: 6 }}>
@@ -245,7 +265,7 @@ const styles = StyleSheet.create({
   hlCircle: { width: 58, height: 58, borderRadius: 29, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center' },
   tabs: { flexDirection: 'row', borderBottomWidth: 1, marginTop: 4 },
   tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 10 },
+  colBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 11, borderRadius: 10, marginVertical: 8 },
   gridImg: { width: W, height: W },
   badge: { position: 'absolute', top: 6, right: 6 },
 });
-                                             
