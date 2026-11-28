@@ -9,10 +9,11 @@ import {
   doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, QueryDocumentSnapshot, DocumentData,
 } from 'firebase/firestore';
 import { auth, db } from '../../config';
-import { useTheme, BRAND } from '../../constants/theme';
+import { useTheme, BRAND, BRAND_TEXT } from '../../constants/theme';
 import { ExplorePostModal } from '../../constants/ExplorePostModal';
 import { getThumbUrl, isBlockedBetween, toggleFollowUser } from '../../constants/searchHelpers';
 import { fetchTaggedPostsPage, fetchUserPostsPage, fetchUserStories } from '../../constants/profileHelpers';
+import { fetchUserRepostsPage } from '../../constants/repostSystem';
 import { FollowListModal, shareProfileLink } from '../../constants/ProfileSubModals';
 import { ReportAccountModal, VisitorMoreModal, VisitorStoryModal, showProfileLinkDialog } from '../../constants/VisitorProfileModals';
 
@@ -30,6 +31,7 @@ export default function UserProfileScreen() {
   const [me, setMe] = useState<any>(null);
 
   const [posts, setPosts] = useState<any[]>([]);
+  const [repostPosts, setRepostPosts] = useState<any[]>([]);
   const [taggedPosts, setTaggedPosts] = useState<any[]>([]);
   const [cursor, setCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -39,18 +41,15 @@ export default function UserProfileScreen() {
   const [activeStories, setActiveStories] = useState<any[]>([]);
   const [storyViewer, setStoryViewer] = useState<{ open: boolean; title: string; items: any[] }>({ open: false, title: '', items: [] });
 
-  const [tab, setTab] = useState<'posts' | 'reels' | 'tagged'>('posts');
+  const [tab, setTab] = useState<'posts' | 'reels' | 'reposts' | 'tagged'>('posts');
   const [followBusy, setFollowBusy] = useState(false);
   const [followMode, setFollowMode] = useState<'followers' | 'following' | null>(null);
   const [selectedPost, setSelectedPost] = useState<any | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
 
-  // Own profile deep link redirect
   useEffect(() => {
-    if (myUid && id === myUid) {
-      router.replace('/profile' as any);
-    }
+    if (myUid && id === myUid) router.replace('/profile' as any);
   }, [id, myUid]);
 
   useEffect(() => {
@@ -60,11 +59,9 @@ export default function UserProfileScreen() {
       doc(db, 'users', id),
       (s) => {
         if (!s.exists() || ['deleted', 'suspended', 'deactivated'].includes(s.data()?.status)) {
-          setUnavailable(true);
-          setProfile(null);
+          setUnavailable(true); setProfile(null);
         } else {
-          setUnavailable(false);
-          setProfile({ id: s.id, ...s.data() });
+          setUnavailable(false); setProfile({ id: s.id, ...s.data() });
         }
       },
       () => setErrorMsg('Could not load this profile. Check permissions or connection.')
@@ -80,62 +77,42 @@ export default function UserProfileScreen() {
 
   const loadContent = useCallback(async () => {
     if (!id || !canView) {
-      setPosts([]);
-      setActiveStories([]);
-      setLoadingPosts(false);
-      setRefreshing(false);
+      setPosts([]); setActiveStories([]); setLoadingPosts(false); setRefreshing(false);
       return;
     }
     setLoadingPosts(true);
     try {
       const [pPage, stList] = await Promise.all([fetchUserPostsPage(id, null, 18), fetchUserStories(id)]);
-      setPosts(pPage.items);
-      setCursor(pPage.lastDoc);
-      setHasMore(pPage.hasMore);
+      setPosts(pPage.items); setCursor(pPage.lastDoc); setHasMore(pPage.hasMore);
       const now = Date.now();
-      const visibleStories = stList.filter((s: any) => {
-        if (s.expiresAt && s.expiresAt <= now) return false;
-        if (s.closeFriendsOnly) return Array.isArray(s.allowedUids) && s.allowedUids.includes(myUid);
-        return true;
-      });
-      setActiveStories(visibleStories);
-    } catch {
-      setErrorMsg('Failed to load posts.');
-    } finally {
-      setLoadingPosts(false);
-      setRefreshing(false);
-    }
+      setActiveStories(stList.filter((s: any) => (!s.expiresAt || s.expiresAt > now) && (!s.closeFriendsOnly || (Array.isArray(s.allowedUids) && s.allowedUids.includes(myUid)))));
+    } catch { setErrorMsg('Failed to load posts.'); }
+    finally { setLoadingPosts(false); setRefreshing(false); }
   }, [id, canView, myUid]);
 
   useEffect(() => { loadContent(); }, [loadContent]);
 
   useEffect(() => {
-    if (canView && tab === 'tagged' && profile?.username) {
+    if (!canView) return;
+    if (tab === 'tagged' && profile?.username) {
       fetchTaggedPostsPage(profile.username.toLowerCase(), null, 18).then((r) => setTaggedPosts(r.items)).catch(() => {});
+    } else if (tab === 'reposts' && id) {
+      fetchUserRepostsPage(id, null, 18).then((r) => setRepostPosts(r.items)).catch(() => {});
     }
-  }, [canView, tab, profile?.username]);
+  }, [canView, tab, profile?.username, id]);
 
-const handleFollowPress = async () => {
+  const handleFollowPress = async () => {
     if (!myUid) return Alert.alert('Sign In Required', 'Please sign in to follow users.');
     if (followBusy || !profile || blocked) return;
     if (isFollowing) {
       Alert.alert(`Unfollow @${profile.username}?`, 'You will stop seeing their private posts.', [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Unfollow',
-          style: 'destructive',
-          onPress: async () => {
-            setFollowBusy(true);
-            try { await toggleFollowUser(profile, me, myUid); } finally { setFollowBusy(false); }
-          },
-        },
+        { text: 'Unfollow', style: 'destructive', onPress: async () => { setFollowBusy(true); try { await toggleFollowUser(profile, me, myUid); } finally { setFollowBusy(false); } } },
       ]);
       return;
     }
     setFollowBusy(true);
-    try { await toggleFollowUser(profile, me, myUid); } catch {
-      Alert.alert('Error', 'Action failed. Please check your connection.');
-    } finally { setFollowBusy(false); }
+    try { await toggleFollowUser(profile, me, myUid); } catch { Alert.alert('Error', 'Action failed.'); } finally { setFollowBusy(false); }
   };
 
   const handleMessagePress = () => {
@@ -153,17 +130,10 @@ const handleFollowPress = async () => {
     Alert.alert(iBlocked ? `Unblock @${profile.username}?` : `Block @${profile.username}?`, iBlocked ? 'They will be able to find your profile again.' : 'They will not be able to see your posts or message you.', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: iBlocked ? 'Unblock' : 'Block',
-        style: 'destructive',
+        text: iBlocked ? 'Unblock' : 'Block', style: 'destructive',
         onPress: async () => {
-          await updateDoc(doc(db, 'users', myUid), {
-            blockedUsers: iBlocked ? arrayRemove(id) : arrayUnion(id),
-            following: arrayRemove(id),
-            followers: arrayRemove(id),
-          });
-          if (!iBlocked) {
-            await updateDoc(doc(db, 'users', id), { followers: arrayRemove(myUid), following: arrayRemove(myUid) }).catch(() => {});
-          }
+          await updateDoc(doc(db, 'users', myUid), { blockedUsers: iBlocked ? arrayRemove(id) : arrayUnion(id), following: arrayRemove(id), followers: arrayRemove(id) });
+          if (!iBlocked) await updateDoc(doc(db, 'users', id), { followers: arrayRemove(myUid), following: arrayRemove(myUid) }).catch(() => {});
         },
       },
     ]);
@@ -175,18 +145,15 @@ const handleFollowPress = async () => {
     await updateDoc(doc(db, 'users', myUid), { [field]: exists ? arrayRemove(id) : arrayUnion(id) });
     Alert.alert(exists ? `Un${label}` : label, `@${profile.username} updated.`);
   };
-
-  if (unavailable) {
+        if (unavailable) {
     return (
       <View style={[styles.center, { backgroundColor: c.background }]}>
         <Ionicons name="person-remove-outline" size={44} color={c.muted} />
         <Text style={{ color: c.text, fontWeight: '700', marginTop: 10 }}>User Unavailable</Text>
-        <Text style={{ color: c.muted, fontSize: 13, marginTop: 4 }}>This account may be deleted or suspended.</Text>
         <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 14 }}><Text style={{ color: BRAND, fontWeight: '700' }}>Go Back</Text></TouchableOpacity>
       </View>
     );
   }
-
   if (errorMsg && !profile) {
     return (
       <View style={[styles.center, { backgroundColor: c.background }]}>
@@ -195,14 +162,11 @@ const handleFollowPress = async () => {
       </View>
     );
   }
-
-  if (!profile) {
-    return <View style={[styles.center, { backgroundColor: c.background }]}><ActivityIndicator size="large" color={BRAND} /></View>;
-  }
+  if (!profile) return <View style={[styles.center, { backgroundColor: c.background }]}><ActivityIndicator size="large" color={BRAND} /></View>;
 
   const followLabel = isFollowing ? 'Following' : isRequested ? 'Requested' : 'Follow';
   const highlights: any[] = canView && Array.isArray(profile.highlights) ? profile.highlights : [];
-  const displayList = !canView ? [] : tab === 'posts' ? posts.filter((p) => p.mediaType !== 'video') : tab === 'reels' ? posts.filter((p) => p.mediaType === 'video') : taggedPosts;
+  const displayList = !canView ? [] : tab === 'posts' ? posts.filter((p) => p.mediaType !== 'video') : tab === 'reels' ? posts.filter((p) => p.mediaType === 'video') : tab === 'reposts' ? repostPosts : taggedPosts;
   const iBlocked = Array.isArray(me?.blockedUsers) && me.blockedUsers.includes(id);
   const isMuted = Array.isArray(me?.mutedUsers) && me.mutedUsers.includes(id);
   const isRestricted = Array.isArray(me?.restrictedUsers) && me.restrictedUsers.includes(id);
@@ -225,7 +189,7 @@ const handleFollowPress = async () => {
         keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadContent(); }} tintColor={BRAND} />}
         onEndReached={() => {
-          if (canView && hasMore && cursor && tab !== 'tagged') {
+          if (canView && hasMore && cursor && (tab === 'posts' || tab === 'reels')) {
             fetchUserPostsPage(id, cursor, 18).then((p) => { setPosts((prev) => [...prev, ...p.items]); setCursor(p.lastDoc); setHasMore(p.hasMore); });
           }
         }}
@@ -233,14 +197,10 @@ const handleFollowPress = async () => {
         ListHeaderComponent={
           <View style={{ paddingHorizontal: 14 }}>
             <View style={styles.infoRow}>
-              <TouchableOpacity
-                disabled={activeStories.length === 0}
-                onPress={() => setStoryViewer({ open: true, title: `@${profile.username}`, items: activeStories })}
-                style={[styles.ring, { borderColor: activeStories.length > 0 ? '#EC4899' : 'transparent', borderWidth: activeStories.length > 0 ? 2.5 : 0 }]}
-              >
+              <TouchableOpacity disabled={activeStories.length === 0} onPress={() => setStoryViewer({ open: true, title: `@${profile.username}`, items: activeStories })} style={[styles.ring, { borderColor: activeStories.length > 0 ? '#EC4899' : 'transparent', borderWidth: activeStories.length > 0 ? 2.5 : 0 }]}>
                 {profile.avatar ? <Image source={{ uri: profile.avatar }} style={styles.avatar} /> : (
                   <View style={[styles.avatar, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
-                    <Text style={{ color: '#fff', fontSize: 26, fontWeight: '700' }}>{(profile.username || 'U')[0].toUpperCase()}</Text>
+                    <Text style={{ color: BRAND_TEXT, fontSize: 26, fontWeight: '700' }}>{(profile.username || 'U')[0].toUpperCase()}</Text>
                   </View>
                 )}
               </TouchableOpacity>
@@ -257,16 +217,12 @@ const handleFollowPress = async () => {
             </View>
             {!!profile.category && !blocked && <Text style={{ color: BRAND, fontSize: 12, fontWeight: '600' }}>{profile.category}</Text>}
             {!!profile.bio && !blocked && <Text style={{ color: c.text, marginTop: 2 }}>{profile.bio}</Text>}
-            {!!profile.website && !blocked && (
-              <TouchableOpacity onPress={() => Linking.openURL(profile.website.startsWith('http') ? profile.website : `https://${profile.website}`)}>
-                <Text style={{ color: BRAND, marginTop: 2 }}>{profile.website}</Text>
-              </TouchableOpacity>
-            )}
+            {!!profile.website && !blocked && <TouchableOpacity onPress={() => Linking.openURL(profile.website.startsWith('http') ? profile.website : `https://${profile.website}`)}><Text style={{ color: BRAND, marginTop: 2 }}>{profile.website}</Text></TouchableOpacity>}
 
             {!blocked && (
               <View style={styles.btnRow}>
                 <TouchableOpacity disabled={followBusy} style={[styles.btn, { backgroundColor: isFollowing || isRequested ? c.input : BRAND }]} onPress={handleFollowPress}>
-                  <Text style={{ color: isFollowing || isRequested ? c.text : '#fff', fontWeight: '700' }}>{followLabel}</Text>
+                  <Text style={{ color: isFollowing || isRequested ? c.text : BRAND_TEXT, fontWeight: '700' }}>{followLabel}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.btn, { backgroundColor: c.input }]} onPress={handleMessagePress}>
                   <Text style={{ color: c.text, fontWeight: '700' }}>Message</Text>
@@ -280,15 +236,7 @@ const handleFollowPress = async () => {
             {highlights.length > 0 && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 10 }}>
                 {highlights.map((h) => (
-                  <TouchableOpacity
-                    key={h.id}
-                    onPress={async () => {
-                      const all = await fetchUserStories(id);
-                      const items = all.filter((s) => (h.storyIds || []).includes(s.id));
-                      if (items.length) setStoryViewer({ open: true, title: h.title, items });
-                    }}
-                    style={{ alignItems: 'center', width: 62 }}
-                  >
+                  <TouchableOpacity key={h.id} onPress={async () => { const all = await fetchUserStories(id); const items = all.filter((s) => (h.storyIds || []).includes(s.id)); if (items.length) setStoryViewer({ open: true, title: h.title, items }); }} style={{ alignItems: 'center', width: 62 }}>
                     <Image source={{ uri: h.cover }} style={[styles.hlCircle, { borderColor: BRAND }]} />
                     <Text style={{ color: c.text, fontSize: 11, marginTop: 4 }} numberOfLines={1}>{h.title}</Text>
                   </TouchableOpacity>
@@ -297,20 +245,12 @@ const handleFollowPress = async () => {
             )}
 
             {blocked ? (
-             <View style={styles.lockBox}>
-                <Ionicons name="ban-outline" size={38} color={c.muted} />
-                <Text style={{ color: c.text, fontWeight: '700', marginTop: 8 }}>Content Unavailable</Text>
-                <Text style={{ color: c.muted, fontSize: 13 }}>This profile is blocked.</Text>
-              </View>
+              <View style={styles.lockBox}><Ionicons name="ban-outline" size={38} color={c.muted} /><Text style={{ color: c.text, fontWeight: '700', marginTop: 8 }}>Content Unavailable</Text></View>
             ) : !canView ? (
-              <View style={styles.lockBox}>
-                <Ionicons name="lock-closed-outline" size={38} color={c.muted} />
-                <Text style={{ color: c.text, fontWeight: '700', marginTop: 8 }}>This Account is Private</Text>
-                <Text style={{ color: c.muted, fontSize: 13 }}>Follow this account to see their photos and reels.</Text>
-              </View>
+              <View style={styles.lockBox}><Ionicons name="lock-closed-outline" size={38} color={c.muted} /><Text style={{ color: c.text, fontWeight: '700', marginTop: 8 }}>This Account is Private</Text><Text style={{ color: c.muted, fontSize: 13 }}>Follow this account to see their photos and reels.</Text></View>
             ) : (
               <View style={[styles.tabs, { borderBottomColor: c.border }]}>
-                {([{ k: 'posts', icon: 'grid-outline' }, { k: 'reels', icon: 'play-circle-outline' }, { k: 'tagged', icon: 'person-outline' }] as const).map((t) => (
+                {([{ k: 'posts', icon: 'grid-outline' }, { k: 'reels', icon: 'play-circle-outline' }, { k: 'reposts', icon: 'repeat-outline' }, { k: 'tagged', icon: 'person-outline' }] as const).map((t) => (
                   <TouchableOpacity key={t.k} onPress={() => setTab(t.k)} style={[styles.tabBtn, tab === t.k && { borderBottomColor: c.text, borderBottomWidth: 2 }]}>
                     <Ionicons name={t.icon} size={22} color={tab === t.k ? c.text : c.muted} />
                   </TouchableOpacity>
@@ -332,25 +272,7 @@ const handleFollowPress = async () => {
       <ExplorePostModal post={selectedPost} author={profile} me={me} onClose={() => setSelectedPost(null)} onPressTag={(t) => router.navigate({ pathname: '/explore', params: { q: t } } as any)} onPressPlace={(p) => router.navigate({ pathname: '/explore', params: { q: p } } as any)} />
       <VisitorStoryModal visible={storyViewer.open} title={storyViewer.title} stories={storyViewer.items} onClose={() => setStoryViewer({ open: false, title: '', items: [] })} />
       <ReportAccountModal visible={reportOpen} targetUser={profile} myUid={myUid} onClose={() => setReportOpen(false)} />
-      <VisitorMoreModal
-        visible={moreOpen}
-        profile={profile}
-        isFollowing={isFollowing}
-        isRequested={isRequested}
-        isBlocked={iBlocked}
-        isMuted={isMuted}
-        isRestricted={isRestricted}
-        onClose={() => setMoreOpen(false)}
-        onShare={() => shareProfileLink(id, profile.username || 'user')}
-        onCopyLink={() => showProfileLinkDialog(id, profile.username || 'user')}
-        onAbout={() => Alert.alert(`About @${profile.username}`, `Username: @${profile.username}\nAccount Type: ${profile.accountType || 'Personal'}\nPrivate: ${profile.isPrivate ? 'Yes' : 'No'}`)}
-        onMute={() => toggleListField('mutedUsers', 'Muted')}
-        onRestrict={() => toggleListField('restrictedUsers', 'Restricted')}
-        onUnfollow={handleFollowPress}
-        onCancelReq={handleFollowPress}
-        onBlock={handleBlockToggle}
-        onReport={() => setReportOpen(true)}
-      />
+      <VisitorMoreModal visible={moreOpen} profile={profile} isFollowing={isFollowing} isRequested={isRequested} isBlocked={iBlocked} isMuted={isMuted} isRestricted={isRestricted} onClose={() => setMoreOpen(false)} onShare={() => shareProfileLink(id, profile.username || 'user')} onCopyLink={() => showProfileLinkDialog(id, profile.username || 'user')} onAbout={() => Alert.alert(`About @${profile.username}`, `Username: @${profile.username}\nAccount Type: ${profile.accountType || 'Personal'}\nPrivate: ${profile.isPrivate ? 'Yes' : 'No'}`)} onMute={() => toggleListField('mutedUsers', 'Muted')} onRestrict={() => toggleListField('restrictedUsers', 'Restricted')} onUnfollow={handleFollowPress} onCancelReq={handleFollowPress} onBlock={handleBlockToggle} onReport={() => setReportOpen(true)} />
     </View>
   );
 }
@@ -376,3 +298,4 @@ const styles = StyleSheet.create({
   gridImg: { width: W, height: W },
   badge: { position: 'absolute', top: 6, right: 6 },
 });
+                                                                                                                                                                                                                                       
