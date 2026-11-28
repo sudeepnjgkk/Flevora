@@ -1,12 +1,19 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, Modal, TextInput, FlatList, Image, ActivityIndicator, Alert, KeyboardAvoidingView, StyleSheet } from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View, Text, TouchableOpacity, Modal, TextInput, FlatList, Image,
+  ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StyleSheet,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { collection, query, orderBy, limit, onSnapshot, addDoc, doc, updateDoc, deleteDoc, arrayUnion, arrayRemove, increment, serverTimestamp } from 'firebase/firestore';
+import {
+  collection, query, orderBy, limit, onSnapshot, addDoc, doc, getDoc, getDocs,
+  updateDoc, deleteDoc, arrayUnion, arrayRemove, increment, serverTimestamp, where,
+} from 'firebase/firestore';
 import { auth, db } from '../config';
-import { useTheme, BRAND } from './theme';
+import { useTheme, BRAND, BRAND_TEXT } from './theme';
 import { sendNotification } from './notify';
+import { AnimatedLikeButton } from './LikeComponents';
 import { CommentActionMenu, CommentLikesModal, CommentReportModal, CommentSettingsModal } from './CommentExtras';
 
 const EMOJIS = ['❤️', '🙌', '🔥', '👏', '😢', '😍', '😮', '😂'];
@@ -20,14 +27,107 @@ const relTime = (ts: any) => {
   return m < 1 ? 'now' : m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`;
 };
 
+const getMs = (ts: any) => (ts?.toMillis ? ts.toMillis() : typeof ts === 'number' ? ts : Date.now());
+
+const CommentItemRow = memo(function CommentItemRow({
+  item, u, uid, c, expanded, onToggleExpand, onReply, onMenu, onLike, onOpenLikes, onOpenUser,
+}: any) {
+  const liked = (item.likes || []).includes(uid);
+  const reps: any[] = Array.isArray(item.replies) ? item.replies : [];
+  const showAll = !!expanded;
+  const shownReps = showAll ? reps : reps.slice(0, 2);
+
+  const renderText = (txt: string) =>
+    txt.split(/(@[a-zA-Z0-9._]+)/g).map((part, i) =>
+      part.startsWith('@') ? (
+        <Text key={i} style={{ color: BRAND, fontWeight: '700' }} onPress={() => onOpenUser(part.slice(1).toLowerCase(), true)}>
+          {part}
+        </Text>
+      ) : (
+        <Text key={i}>{part}</Text>
+      )
+    );
+
+  return (
+    <View style={s.cmtWrap}>
+      <TouchableOpacity style={s.cmtRow} onLongPress={() => onMenu(item)} activeOpacity={0.9}>
+        <TouchableOpacity onPress={() => onOpenUser(item.uid)}>
+          {u?.photoUrl || u?.avatar ? (
+            <Image source={{ uri: u.photoUrl || u.avatar }} style={s.av} />
+          ) : (
+            <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}>
+              <Ionicons name="person" size={16} color={BRAND_TEXT} />
+            </View>
+          )}
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <TouchableOpacity onPress={() => onOpenUser(item.uid)}>
+              <Text style={{ color: c.text, fontWeight: '800', fontSize: 13 }}>@{item.username}</Text>
+            </TouchableOpacity>
+            {(u?.isVerified || u?.verified) && <Ionicons name="checkmark-circle" size={13} color="#3B82F6" />}
+            <Text style={{ color: c.muted, fontSize: 11 }}>{relTime(item.createdAt)}</Text>
+            {item.isPinned && <Text style={{ color: BRAND, fontSize: 10, fontWeight: '800' }}>Pinned</Text>}
+            {!!item.editedAt && <Text style={{ color: c.muted, fontSize: 10 }}>(edited)</Text>}
+          </View>
+          {!!item.text && <Text style={{ color: c.text, fontSize: 14, marginTop: 2 }}>{renderText(item.text)}</Text>}
+          {!!item.mediaUrl && <Image source={{ uri: item.mediaUrl }} style={s.cmtImg} />}
+          <View style={{ flexDirection: 'row', gap: 14, marginTop: 4 }}>
+            <TouchableOpacity onPress={() => onReply(item)}><Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>Reply</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => onMenu(item)}><Text style={{ color: c.muted, fontSize: 12 }}>More</Text></TouchableOpacity>
+          </View>
+        </View>
+        <View style={{ alignItems: 'center', paddingLeft: 8 }}>
+          <AnimatedLikeButton liked={liked} size={17} inactiveColor={c.muted} onPress={() => onLike(item)} />
+          {!!item.likes?.length && (
+            <TouchableOpacity onPress={() => onOpenLikes(item.likes)}>
+              <Text style={{ color: c.muted, fontSize: 11 }}>{item.likes.length}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </TouchableOpacity>
+
+      {shownReps.map((r) => {
+        const rLiked = (r.likes || []).includes(uid);
+        return (
+          <View key={r.id} style={s.repRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: c.text, fontSize: 13 }}>
+                <Text style={{ fontWeight: '800' }} onPress={() => onOpenUser(r.uid)}>@{r.username} </Text>
+                {renderText(r.text || '')}{' '}
+                <Text style={{ color: c.muted, fontSize: 10 }}>{relTime(r.createdAt)}{r.editedAt ? ' (edited)' : ''}</Text>
+              </Text>
+            </View>
+            <View style={{ paddingHorizontal: 6 }}>
+              <AnimatedLikeButton liked={rLiked} size={14} inactiveColor={c.muted} onPress={() => onLike(r, item)} />
+            </View>
+            <TouchableOpacity onPress={() => onMenu({ ...r, isReply: true, parent: item, commentId: item.id })}>
+              <Ionicons name="ellipsis-horizontal" size={14} color={c.muted} />
+            </TouchableOpacity>
+          </View>
+        );
+      })}
+
+      {reps.length > 2 && (
+        <TouchableOpacity onPress={() => onToggleExpand(item.id)} style={{ marginLeft: 44, marginTop: 4 }}>
+          <Text style={{ color: BRAND, fontSize: 12, fontWeight: '700' }}>
+            {showAll ? 'Hide replies' : `View all ${reps.length} replies`}
+          </Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+});
 export function CommentModal({ postId, post, onClose }: { postId: string | null; post?: any; onClose: () => void }) {
   const { c } = useTheme();
   const router = useRouter();
   const uid = auth.currentUser?.uid || '';
+
   const [comments, setComments] = useState<any[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, any>>({});
   const [lim, setLim] = useState(25);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [err, setErr] = useState(false);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -39,23 +139,52 @@ export function CommentModal({ postId, post, onClose }: { postId: string | null;
   const [reportTarget, setReportTarget] = useState<any>(null);
   const [likesUids, setLikesUids] = useState<string[] | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const loadedPostRef = useRef<string | null>(null);
 
-  const loadComments = () => {
+  // One-time bounded user fetch (no live users listener = zero random re-renders!)
+  useEffect(() => {
     if (!postId) return;
-    setLoading(true); setErr(false);
-    return onSnapshot(query(collection(db, 'posts', postId, 'comments'), orderBy('createdAt', 'asc'), limit(lim)),
-      (s) => { setComments(s.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); },
-      () => { setErr(true); setLoading(false); }
+    getDocs(query(collection(db, 'users'), limit(50))).then((snap) => {
+      const m: Record<string, any> = {};
+      snap.docs.forEach((d) => { m[d.id] = { id: d.id, ...d.data() }; });
+      setUsersMap(m);
+    }).catch(() => {});
+    if (uid) {
+      getDoc(doc(db, 'users', uid)).then((s) => {
+        if (s.exists()) setUsersMap((prev) => ({ ...prev, [s.id]: { id: s.id, ...s.data() } }));
+      }).catch(() => {});
+    }
+  }, [postId, uid]);
+
+  // Single stable listener: initialLoading runs ONLY when postId changes, NEVER on pagination or updates!
+  useEffect(() => {
+    if (!postId) {
+      setComments([]);
+      setReplyParent(null);
+      setEditTarget(null);
+      loadedPostRef.current = null;
+      return;
+    }
+    if (loadedPostRef.current !== postId) {
+      setInitialLoading(true);
+      setLim(25);
+      loadedPostRef.current = postId;
+    }
+    setErr(false);
+    const unsub = onSnapshot(
+      query(collection(db, 'posts', postId, 'comments'), orderBy('createdAt', 'asc'), limit(lim)),
+      (s) => {
+        setComments(s.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setInitialLoading(false);
+        setLoadingMore(false);
+      },
+      () => {
+        setErr(true);
+        setInitialLoading(false);
+        setLoadingMore(false);
+      }
     );
-  };
-  
-useEffect(() => {
-    if (!postId) return setComments([]);
-    const u1 = loadComments();
-    const u2 = onSnapshot(collection(db, 'users'), (s) => {
-      const m: Record<string, any> = {}; s.docs.forEach((d) => { m[d.id] = { id: d.id, ...d.data() }; }); setUsersMap(m);
-    });
-    return () => { u1?.(); u2(); };
+    return () => unsub();
   }, [postId, lim]);
 
   const me = usersMap[uid] || {};
@@ -63,14 +192,14 @@ useEffect(() => {
   const isPostOwner = !!uid && post?.uid === uid;
   const blocked = (me.blockedUsers || []).includes(post?.uid) || (owner.blockedUsers || []).includes(uid);
   const policy = post?.commentsDisabled ? 'off' : (post?.commentPolicy || 'everyone');
-  const canComment = !blocked && (isPostOwner || (policy === 'everyone') || (policy === 'followers' && (owner.followers || []).includes(uid)) || (policy === 'following' && (owner.following || []).includes(uid)));
+  const canComment = !blocked && (isPostOwner || policy === 'everyone' || (policy === 'followers' && (owner.followers || []).includes(uid)) || (policy === 'following' && (owner.following || []).includes(uid)));
 
-  const mentionMatch = text.match(/@([a-zA-Z0-9_]*)$/);
+  const mentionMatch = text.match(/@([a-zA-Z0-9._]*)$/);
   const mentionSuggestions = useMemo(() => {
     if (!mentionMatch) return [];
     const q = mentionMatch[1].toLowerCase();
     return Object.values(usersMap).filter((u: any) => u.id !== uid && !(me.blockedUsers || []).includes(u.id) && (u.username || '').toLowerCase().includes(q)).slice(0, 5);
-  }, [text, usersMap, uid]);
+  }, [text, usersMap, uid, me.blockedUsers]);
 
   const visibleComments = useMemo(() => {
     const filtered = comments.filter((cm) => {
@@ -79,14 +208,18 @@ useEffect(() => {
       if (cm.isHidden && isPostOwner && !showHidden) return false;
       return true;
     });
-    return [...filtered].sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0));
-  }, [comments, me, usersMap, isPostOwner, showHidden]);
+    return [...filtered].sort((a, b) => {
+      const pinDiff = (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0);
+      return pinDiff !== 0 ? pinDiff : getMs(a.createdAt) - getMs(b.createdAt);
+    });
+  }, [comments, me.blockedUsers, usersMap, uid, isPostOwner, showHidden]);
 
   const submit = async (customText?: string, mediaUrl = '') => {
     const body = (customText ?? text).trim();
     if (!postId || !uid || sending || (!body && !mediaUrl) || body.length > 2200) return;
     if (!canComment && !editTarget) return Alert.alert('Restricted', 'Comments are restricted on this post.');
     setSending(true);
+    const savedDraft = text;
     try {
       const uname = me.username || 'user';
       if (editTarget) {
@@ -103,29 +236,39 @@ useEffect(() => {
         sendNotification({ toUid: replyParent.uid, fromUid: uid, fromUsername: uname, type: 'reply', message: `replied: ${body.slice(0, 60)}`, postId, commentId: replyParent.id });
         setReplyParent(null); setText('');
       } else {
+        setText('');
         const ref = await addDoc(collection(db, 'posts', postId, 'comments'), { uid, username: uname, text: body, mediaUrl, likes: [], replies: [], isPinned: false, isHidden: false, createdAt: serverTimestamp() });
         updateDoc(doc(db, 'posts', postId), { commentsCount: increment(1) }).catch(() => {});
-        if (post?.uid) sendNotification({ toUid: post.uid, fromUid: uid, fromUsername: uname, type: 'comment', message: `commented: ${body.slice(0, 60) || '📷'}`, postId, commentId: ref.id });
-        setText('');
+        if (post?.uid) sendNotification({ toUid: post.uid, fromUid: uid, fromUsername: uname, type: 'comment', message: `commented: ${body.slice(0, 60) || 'Photo'}`, postId, commentId: ref.id });
       }
       const seen = new Set<string>();
-      (body.match(/@[a-zA-Z0-9_]+/g) || []).forEach((m) => {
+      (body.match(/@[a-zA-Z0-9._]+/g) || []).forEach((m) => {
         const target = Object.values(usersMap).find((u: any) => (u.username || '').toLowerCase() === m.slice(1).toLowerCase());
-        if (target && !seen.has(target.id)) { seen.add(target.id); sendNotification({ toUid: target.id, fromUid: uid, fromUsername: uname, type: 'mention', message: `mentioned you in a comment: ${body.slice(0, 50)}`, postId }); }
+        if (target && !seen.has(target.id)) {
+          seen.add(target.id);
+          sendNotification({ toUid: target.id, fromUid: uid, fromUsername: uname, type: 'mention', message: `mentioned you in a comment: ${body.slice(0, 50)}`, postId });
+        }
       });
-    } catch { Alert.alert('Failed', 'Could not post comment. Please retry.'); }
-    finally { setSending(false); }
+    } catch {
+      setText(savedDraft);
+      Alert.alert('Failed', 'Could not post comment. Please retry.');
+    } finally {
+      setSending(false);
+    }
   };
 
   const pickPhoto = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.65 });
     if (res.canceled || !res.assets[0]) return;
-    const data = new FormData(); data.append('file', { uri: res.assets[0].uri, type: 'image/jpeg', name: `c_${Date.now()}.jpg` } as any); data.append('upload_preset', PRESET);
+    const data = new FormData();
+    data.append('file', { uri: res.assets[0].uri, type: 'image/jpeg', name: `c_${Date.now()}.jpg` } as any);
+    data.append('upload_preset', PRESET);
     const r = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD}/image/upload`, { method: 'POST', body: data });
-    const j = await r.json(); if (j.secure_url) submit('', j.secure_url);
+    const j = await r.json();
+    if (j.secure_url) submit('', j.secure_url);
   };
 
-  const toggleLike = async (item: any, parent?: any) => {
+  const toggleLike = useCallback(async (item: any, parent?: any) => {
     if (!postId || !uid) return;
     if (parent) {
       const next = (parent.replies || []).map((r: any) => r.id === item.id ? { ...r, likes: (r.likes || []).includes(uid) ? r.likes.filter((x: string) => x !== uid) : [...(r.likes || []), uid] } : r);
@@ -135,7 +278,7 @@ useEffect(() => {
       await updateDoc(doc(db, 'posts', postId, 'comments', item.id), { likes: liked ? arrayRemove(uid) : arrayUnion(uid) }).catch(() => {});
       if (!liked) sendNotification({ toUid: item.uid, fromUid: uid, fromUsername: me.username || 'user', type: 'like', message: 'liked your comment.', postId, commentId: item.id });
     }
-  };
+  }, [postId, uid, me.username]);
 
   const handlePin = async (cm: any) => {
     if (!postId) return;
@@ -151,22 +294,23 @@ useEffect(() => {
         await updateDoc(doc(db, 'posts', postId, 'comments', t.parent.id), { replies: next }).catch(() => {});
       } else {
         await deleteDoc(doc(db, 'posts', postId, 'comments', t.id)).catch(() => {});
-        updateDoc(doc(db, 'posts', postId), { commentsCount: increment(-1) }).catch(() => {});
+        if ((post?.commentsCount ?? comments.length) > 0) updateDoc(doc(db, 'posts', postId), { commentsCount: increment(-1) }).catch(() => {});
       }
     },
   }]);
 
-  const renderText = (txt: string) => txt.split(/(@[a-zA-Z0-9_]+)/g).map((part, i) => {
-    if (part.startsWith('@')) {
-      const u = Object.values(usersMap).find((x: any) => (x.username || '').toLowerCase() === part.slice(1).toLowerCase());
-      return <Text key={i} style={{ color: BRAND, fontWeight: '700' }} onPress={() => { if (u) { onClose(); router.push(`/user/${u.id}` as any); } }}>{part}</Text>;
-    }
-    return <Text key={i}>{part}</Text>;
-  });
+  const openUser = useCallback(async (val: string, byUsername = false) => {
+    onClose();
+    if (!byUsername) return router.push(`/user/${val}` as any);
+    const cached = Object.values(usersMap).find((x: any) => (x.username || '').toLowerCase() === val);
+    if (cached) return router.push(`/user/${cached.id}` as any);
+    const snap = await getDocs(query(collection(db, 'users'), where('username', '==', val), limit(1)));
+    if (!snap.empty) router.push(`/user/${snap.docs[0].id}` as any);
+  }, [onClose, router, usersMap]);
 
   return (
     <Modal visible={!!postId} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior="padding" style={s.backdrop}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.backdrop}>
         <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
         <View style={[s.sheet, { backgroundColor: c.card }]}>
           <View style={[s.hdr, { borderBottomColor: c.border }]}>
@@ -178,69 +322,41 @@ useEffect(() => {
             </View>
           </View>
 
-          {loading ? <ActivityIndicator size="large" color={BRAND} style={{ flex: 1 }} /> : err ? (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: c.muted }}>Failed to load comments</Text><TouchableOpacity onPress={loadComments} style={{ marginTop: 10 }}><Text style={{ color: BRAND, fontWeight: '700' }}>Retry</Text></TouchableOpacity></View>
+          {initialLoading ? (
+            <ActivityIndicator size="large" color={BRAND} style={{ flex: 1 }} />
+          ) : err ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <Text style={{ color: c.muted }}>Failed to load comments</Text>
+              <TouchableOpacity onPress={() => setLim((n) => n)} style={{ marginTop: 10 }}><Text style={{ color: BRAND, fontWeight: '700' }}>Retry</Text></TouchableOpacity>
+            </View>
           ) : (
             <FlatList
-              data={visibleComments} keyExtractor={(i) => i.id} style={{ flex: 1 }} keyboardShouldPersistTaps="handled"
-              onEndReached={() => setLim((n) => n + 20)} onEndReachedThreshold={0.4}
-              ListEmptyComponent={<Text style={{ color: c.muted, textAlign: 'center', marginTop: 40 }}>No comments yet. Be the first!</Text>}
-              renderItem={({ item }) => {
-                const u = usersMap[item.uid] || {};
-                const liked = (item.likes || []).includes(uid);
-                const reps: any[] = Array.isArray(item.replies) ? item.replies : [];
-                const showAll = !!expanded[item.id];
-                const shownReps = showAll ? reps : reps.slice(0, 2);
-                return (
-                  <View style={s.cmtWrap}>
-                    <TouchableOpacity style={s.cmtRow} onLongPress={() => setMenuTarget(item)}>
-                      <TouchableOpacity onPress={() => { onClose(); router.push(`/user/${item.uid}` as any); }}>
-                        {u.photoUrl ? <Image source={{ uri: u.photoUrl }} style={s.av} /> : <View style={[s.av, { backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center' }]}><Ionicons name="person" size={16} color="#fff" /></View>}
-                      </TouchableOpacity>
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <Text style={{ color: c.text, fontWeight: '800', fontSize: 13 }}>@{item.username}</Text>
-                          {u.isVerified && <Ionicons name="checkmark-circle" size={13} color={BRAND} />}
-                          <Text style={{ color: c.muted, fontSize: 11 }}>{relTime(item.createdAt)}</Text>
-                          {item.isPinned && <Text style={{ color: BRAND, fontSize: 10, fontWeight: '800' }}>📌 Pinned</Text>}
-                          {!!item.editedAt && <Text style={{ color: c.muted, fontSize: 10 }}>(edited)</Text>}
-                        </View>
-                        {!!item.text && <Text style={{ color: c.text, fontSize: 14, marginTop: 2 }}>{renderText(item.text)}</Text>}
-                        {!!item.mediaUrl && <Image source={{ uri: item.mediaUrl }} style={s.cmtImg} />}
-                        <View style={{ flexDirection: 'row', gap: 14, marginTop: 4 }}>
-                          <TouchableOpacity onPress={() => { setReplyParent(item); setEditTarget(null); }}><Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>Reply</Text></TouchableOpacity>
-                          <TouchableOpacity onPress={() => setMenuTarget(item)}><Text style={{ color: c.muted, fontSize: 12 }}>More</Text></TouchableOpacity>
-                        </View>
-                      </View>
-                      <View style={{ alignItems: 'center', paddingLeft: 8 }}>
-                        <TouchableOpacity onPress={() => toggleLike(item)}><Ionicons name={liked ? 'heart' : 'heart-outline'} size={17} color={liked ? '#EF4444' : c.muted} /></TouchableOpacity>
-                        {!!item.likes?.length && <TouchableOpacity onPress={() => setLikesUids(item.likes)}><Text style={{ color: c.muted, fontSize: 11 }}>{item.likes.length}</Text></TouchableOpacity>}
-                      </View>
-                    </TouchableOpacity>
-                    {shownReps.map((r) => (
-                      <View key={r.id} style={s.repRow}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ color: c.text, fontSize: 13 }}><Text style={{ fontWeight: '800' }}>@{r.username} </Text>{renderText(r.text)} <Text style={{ color: c.muted, fontSize: 10 }}>{relTime(r.createdAt)}{r.editedAt ? ' (edited)' : ''}</Text></Text>
-                        </View>
-                        <TouchableOpacity onPress={() => toggleLike(r, item)} style={{ paddingHorizontal: 6 }}><Ionicons name={(r.likes || []).includes(uid) ? 'heart' : 'heart-outline'} size={14} color={(r.likes || []).includes(uid) ? '#EF4444' : c.muted} /></TouchableOpacity>
-                        <TouchableOpacity onPress={() => setMenuTarget({ ...r, isReply: true, parent: item, commentId: item.id })}><Ionicons name="ellipsis-horizontal" size={14} color={c.muted} /></TouchableOpacity>
-                      </View>
-                    ))}
-                    {reps.length > 2 && (
-                      <TouchableOpacity onPress={() => setExpanded((e) => ({ ...e, [item.id]: !showAll }))} style={{ marginLeft: 44, marginTop: 4 }}>
-                        <Text style={{ color: BRAND, fontSize: 12, fontWeight: '700' }}>{showAll ? 'Hide replies' : `View all ${reps.length} replies`}</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
+              data={visibleComments}
+              keyExtractor={(i) => i.id}
+              style={{ flex: 1 }}
+              keyboardShouldPersistTaps="handled"
+              onEndReached={() => {
+                if (!loadingMore && comments.length >= lim) { setLoadingMore(true); setLim((n) => n + 20); }
               }}
+              onEndReachedThreshold={0.4}
+              ListEmptyComponent={<Text style={{ color: c.muted, textAlign: 'center', marginTop: 40 }}>No comments yet. Be the first!</Text>}
+              ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={BRAND} style={{ marginVertical: 10 }} /> : null}
+              renderItem={({ item }) => (
+                <CommentItemRow
+                  item={item} u={usersMap[item.uid]} uid={uid} c={c}
+                  expanded={!!expanded[item.id]}
+                  onToggleExpand={(id: string) => setExpanded((e) => ({ ...e, [id]: !e[id] }))}
+                  onReply={(cm: any) => { setReplyParent(cm); setEditTarget(null); }}
+                  onMenu={setMenuTarget} onLike={toggleLike} onOpenLikes={setLikesUids} onOpenUser={openUser}
+                />
+              )}
             />
           )}
 
           {mentionSuggestions.length > 0 && (
             <View style={[s.mStrip, { borderTopColor: c.border }]}>
               {mentionSuggestions.map((u: any) => (
-                <TouchableOpacity key={u.id} onPress={() => setText((t) => t.replace(/@[a-zA-Z0-9_]*$/, `@${u.username} `))} style={[s.mChip, { backgroundColor: c.surface }]}>
+                <TouchableOpacity key={u.id} onPress={() => setText((t) => t.replace(/@[a-zA-Z0-9._]*$/, `@${u.username} `))} style={[s.mChip, { backgroundColor: c.surface || c.input }]}>
                   <Text style={{ color: c.text, fontSize: 12, fontWeight: '700' }}>@{u.username}</Text>
                 </TouchableOpacity>
               ))}
@@ -248,7 +364,7 @@ useEffect(() => {
           )}
 
           {(replyParent || editTarget) && (
-            <View style={[s.banner, { backgroundColor: c.surface }]}>
+            <View style={[s.banner, { backgroundColor: c.surface || c.input }]}>
               <Text style={{ color: c.text, fontSize: 12, flex: 1 }}>{editTarget ? 'Editing comment' : `Replying to @${replyParent.username}`}</Text>
               <TouchableOpacity onPress={() => { setReplyParent(null); setEditTarget(null); setText(''); }}><Ionicons name="close" size={18} color={c.muted} /></TouchableOpacity>
             </View>
@@ -289,3 +405,4 @@ const s = StyleSheet.create({
   miniAv: { width: 28, height: 28, borderRadius: 14 },
   inp: { flex: 1, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 8, fontSize: 14 },
 });
+              
