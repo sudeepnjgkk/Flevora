@@ -18,6 +18,7 @@ import {
 import {
   AdvancedSettingsModal, PhotoVideoEditorModal, PostPreviewModal, TagAndCollabModal,
 } from '../constants/PostEditorModals';
+import { ReelsStudioModal } from '../constants/ReelsStudioModal';
 
 export default function UploadScreen({ initialMode, onClose }: { initialMode?: string; onClose?: () => void }) {
   const router = useRouter();
@@ -30,6 +31,7 @@ export default function UploadScreen({ initialMode, onClose }: { initialMode?: s
   const [me, setMe] = useState<any>(null);
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [caps, setCaps] = useState(DEFAULT_POST_CAPABILITIES);
+  const [reelStudioOpen, setReelStudioOpen] = useState(initialMode === 'REEL' || !!remixOfId);
   const [draftId, setDraftId] = useState(`draft_${Date.now()}`);
   const [drafts, setDrafts] = useState<PostDraft[]>([]);
   const [draftsOpen, setDraftsOpen] = useState(false);
@@ -54,6 +56,10 @@ export default function UploadScreen({ initialMode, onClose }: { initialMode?: s
   const [status, setStatus] = useState<'idle' | 'uploading' | 'publishing' | 'published' | 'failed'>('idle');
   const [progress, setProgress] = useState(0);
   const [publishedId, setPublishedId] = useState('');
+
+  useEffect(() => {
+    if (initialMode === 'REEL' || !!remixOfId) setReelStudioOpen(true);
+  }, [initialMode, remixOfId]);
 
   useEffect(() => {
     detectPostCapabilities().then(setCaps);
@@ -177,24 +183,22 @@ export default function UploadScreen({ initialMode, onClose }: { initialMode?: s
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: c.background }]}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           {!!onClose && <TouchableOpacity onPress={onClose}><Ionicons name="close" size={26} color={c.text} /></TouchableOpacity>}
-          <Text style={[styles.title, { color: c.text, marginBottom: 0 }]}>{remixOfId ? 'Remix Reel' : initialMode === 'REEL' ? 'New Reel' : L.newPost}</Text>
+          <Text style={[styles.title, { color: c.text, marginBottom: 0 }]}>{L.newPost}</Text>
         </View>
-        {drafts.length > 0 && (
-          <TouchableOpacity onPress={() => setDraftsOpen(true)} style={[styles.draftPill, { backgroundColor: c.input }]}>
-            <Text style={{ color: BRAND, fontWeight: '800', fontSize: 12 }}>{L.drafts} ({drafts.length})</Text>
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          <TouchableOpacity onPress={() => setReelStudioOpen(true)} style={[styles.draftPill, { backgroundColor: BRAND }]}>
+            <Text style={{ color: BRAND_TEXT, fontWeight: '800', fontSize: 12 }}>Reel Studio</Text>
           </TouchableOpacity>
-        )}
-      </View>
-
-      {!!remixOfId && (
-        <View style={[styles.remixBanner, { backgroundColor: c.input, borderColor: c.border }]}>
-          <Ionicons name="git-branch-outline" size={18} color={BRAND} />
-          <Text style={{ color: c.text, fontWeight: '700' }}>Remixing @{remixOfUser || 'creator'}'s Reel</Text>
+          {drafts.length > 0 && (
+            <TouchableOpacity onPress={() => setDraftsOpen(true)} style={[styles.draftPill, { backgroundColor: c.input }]}>
+              <Text style={{ color: BRAND, fontWeight: '800', fontSize: 12 }}>{L.drafts} ({drafts.length})</Text>
+            </TouchableOpacity>
+          )}
         </View>
-      )}
+      </View>
 
       <View style={styles.btnRow}>
         <TouchableOpacity style={[styles.pickBtn, { backgroundColor: c.input, borderColor: c.border }]} onPress={pickGallery}>
@@ -272,6 +276,15 @@ export default function UploadScreen({ initialMode, onClose }: { initialMode?: s
       <TagAndCollabModal visible={tagOpen} users={allUsers} myUid={uid} taggedUids={taggedUids} setTaggedUids={setTaggedUids} collabUids={collabUids} setCollabUids={setCollabUids} onClose={() => setTagOpen(false)} />
       <AdvancedSettingsModal visible={advOpen} slides={slides} setSlides={setSlides} hideLikes={hideLikes} setHideLikes={setHideLikes} hideViews={hideViews} setHideViews={setHideViews} commentsOff={commentsOff} setCommentsOff={setCommentsOff} allowReshare={allowReshare} setAllowReshare={setAllowReshare} onClose={() => setAdvOpen(false)} />
       <PostPreviewModal visible={previewOpen} user={me} slides={slides} caption={caption} location={location} audience={audience} collabCount={collabUids.length} onClose={() => setPreviewOpen(false)} onPublish={handlePublish} />
+      <ReelsStudioModal
+        visible={reelStudioOpen}
+        uid={uid}
+        me={me}
+        allUsers={allUsers}
+        remixOf={remixOfId ? { postId: remixOfId, username: remixOfUser || '' } : null}
+        onClose={() => { setReelStudioOpen(false); if (initialMode === 'REEL' && onClose) onClose(); }}
+        onPublished={() => { if (onClose) onClose(); }}
+      />
 
       <Modal visible={draftsOpen} animationType="slide" onRequestClose={() => setDraftsOpen(false)}>
         <View style={[styles.container, { backgroundColor: c.background }]}>
@@ -299,7 +312,6 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   title: { fontSize: 22, fontWeight: '800', marginBottom: 16 },
   draftPill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 },
-  remixBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 10, borderWidth: 1, marginBottom: 12 },
   btnRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
   pickBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 12, borderRadius: 12, borderWidth: 1 },
   pickText: { fontWeight: '600', fontSize: 13 },
