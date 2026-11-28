@@ -1,50 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, Switch, TouchableOpacity, TextInput, ScrollView, FlatList, Image,
+  View, Text, TouchableOpacity, TextInput, ScrollView, FlatList, Image,
   StyleSheet, Alert, ActivityIndicator, Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, updateDoc, deleteDoc, arrayUnion, arrayRemove, collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../config';
-import { useTheme, BRAND } from './theme';
-import { fetchPostsByIds, fetchUserPostsPage, fetchUsersByIds } from './profileHelpers';
+import { useTheme, BRAND, BRAND_TEXT } from './theme';
+import { fetchUserPostsPage, fetchUsersByIds } from './profileHelpers';
 import { clearSearchHistoryAll, getThumbUrl, loadSearchHistory, removeSearchHistoryItem, searchAccounts } from './searchHelpers';
-import { ExplorePostModal } from './ExplorePostModal';
+import { SavedLibraryView } from './SaveModals';
 
 const W = (Dimensions.get('window').width - 4) / 3;
 
 export function SavedPostsPage({ user, uid }: { user: any; uid: string }) {
-  const { c } = useTheme();
-  const [posts, setPosts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<any | null>(null);
-
-  useEffect(() => {
-    const ids: string[] = Array.isArray(user?.savedPosts) ? user.savedPosts : [];
-    setLoading(true);
-    fetchPostsByIds(ids).then(setPosts).finally(() => setLoading(false));
-  }, [user?.savedPosts]);
-
-  if (loading) return <ActivityIndicator style={{ marginTop: 40 }} color={BRAND} />;
-  return (
-    <View style={{ flex: 1 }}>
-      <FlatList
-        data={posts}
-        numColumns={3}
-        keyExtractor={(i) => i.id}
-        ListEmptyComponent={<Text style={{ color: c.muted, textAlign: 'center', marginTop: 40 }}>No saved posts yet.</Text>}
-        renderItem={({ item }) => (
-          <TouchableOpacity onPress={() => setSelected(item)} onLongPress={() => Alert.alert('Unsave', 'Remove from Saved?', [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Remove', onPress: () => updateDoc(doc(db, 'users', uid), { savedPosts: arrayRemove(item.id) }) },
-          ])} style={{ margin: 0.6 }}>
-            <Image source={{ uri: getThumbUrl(item) }} style={{ width: W, height: W }} />
-          </TouchableOpacity>
-        )}
-      />
-      <ExplorePostModal post={selected} author={user} me={user} onClose={() => setSelected(null)} onPressTag={() => {}} onPressPlace={() => {}} />
-    </View>
-  );
+  return <SavedLibraryView user={user} myUid={uid} />;
 }
 
 export function YourActivityPage({ user, uid }: { user: any; uid: string }) {
@@ -73,7 +43,7 @@ export function YourActivityPage({ user, uid }: { user: any; uid: string }) {
       <View style={[styles.tabRow, { borderBottomColor: c.border }]}>
         {(['posts', 'likes', 'searches'] as const).map((t) => (
           <TouchableOpacity key={t} onPress={() => setTab(t)} style={[styles.tabBtn, tab === t && { borderBottomColor: BRAND, borderBottomWidth: 2 }]}>
-            <Text style={{ color: tab === t ? BRAND : c.muted, fontWeight: '700', textTransform: 'capitalize' }}>{t}</Text>
+            <Text style={{ color: tab === t ? c.text : c.muted, fontWeight: '700', textTransform: 'capitalize' }}>{t}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -207,7 +177,7 @@ export function InteractionPrivacyPage({ user, updatePref }: { user: any; update
         updatePref({ hiddenWords: words.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean) });
         Alert.alert('Saved', 'Interaction & Hidden Words saved.');
       }}>
-        <Text style={{ color: '#fff', fontWeight: '700' }}>Save Hidden Words</Text>
+        <Text style={{ color: BRAND_TEXT, fontWeight: '700' }}>Save Hidden Words</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -221,4 +191,4 @@ const styles = StyleSheet.create({
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   btn: { paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
 });
-                                   
+    
