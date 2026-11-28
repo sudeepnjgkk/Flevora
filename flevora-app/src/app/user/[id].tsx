@@ -6,7 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
-  collection, doc, onSnapshot, query, where, updateDoc, arrayUnion, arrayRemove, QueryDocumentSnapshot, DocumentData,
+  collection, doc, onSnapshot, query, where, getDocs, updateDoc, arrayUnion, arrayRemove, QueryDocumentSnapshot, DocumentData,
 } from 'firebase/firestore';
 import { auth, db } from '../../config';
 import { useTheme, BRAND, BRAND_TEXT } from '../../constants/theme';
@@ -93,8 +93,16 @@ export default function UserProfileScreen() {
     }
     setLoadingPosts(true);
     try {
-      const [pPage, stList] = await Promise.all([fetchUserPostsPage(id, null, 18), fetchUserStories(id)]);
-      setPosts(pPage.items); setCursor(pPage.lastDoc); setHasMore(pPage.hasMore);
+      const [pPage, stList, collabSnap] = await Promise.all([
+        fetchUserPostsPage(id, null, 18),
+        fetchUserStories(id),
+        getDocs(query(collection(db, 'posts'), where('collaborators', 'array-contains', id))).catch(() => null),
+      ]);
+      const collabItems = collabSnap ? collabSnap.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
+      const seen = new Set(pPage.items.map((x: any) => x.id));
+      const merged = [...pPage.items, ...collabItems.filter((x: any) => !seen.has(x.id))];
+      merged.sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      setPosts(merged); setCursor(pPage.lastDoc); setHasMore(pPage.hasMore);
       const now = Date.now();
       setActiveStories(stList.filter((s: any) => (!s.expiresAt || s.expiresAt > now) && (!s.closeFriendsOnly || (Array.isArray(s.allowedUids) && s.allowedUids.includes(myUid)))));
     } catch { setErrorMsg('Failed to load posts.'); }
@@ -299,7 +307,11 @@ export default function UserProfileScreen() {
         renderItem={({ item }) => (
           <TouchableOpacity onPress={() => setSelectedPost(item)} style={{ margin: 0.6 }}>
             <Image source={{ uri: getThumbUrl(item) }} style={styles.gridImg} />
-            {item.mediaType === 'video' && <Ionicons name="play" size={16} color="#fff" style={styles.badge} />}
+            {Array.isArray(item.mediaItems) && item.mediaItems.length > 1 ? (
+              <Ionicons name="layers" size={16} color="#fff" style={styles.badge} />
+            ) : item.mediaType === 'video' ? (
+              <Ionicons name="play" size={16} color="#fff" style={styles.badge} />
+            ) : null}
           </TouchableOpacity>
         )}
       />
